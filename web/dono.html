@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#23324d">
+  <title>Painel do Dono — Controle de Produção</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🧵 <span id="nomeFabrica">Bordados</span> · Dono</div>
+    <div class="spacer"></div>
+    <div class="who" id="quem"></div>
+    <button class="icon-btn" id="btnSenha" title="Trocar senha">🔑</button>
+    <button class="icon-btn" id="btnSair" title="Sair">⏻</button>
+  </header>
+
+  <nav class="tabs" id="abas">
+    <button data-aba="inicio" class="ativo">Início</button>
+    <button data-aba="lotes">Lotes</button>
+    <button data-aba="fechamento">Fechamento</button>
+    <button data-aba="cadastros">Cadastros</button>
+  </nav>
+
+  <main id="conteudo"><div class="vazio">Carregando…</div></main>
+
+  <script type="module" src="js/dono.js"></script>
+</body>
+</html>
