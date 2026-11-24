@@ -176,3 +176,30 @@ export function modalTrocarSenha(usuario) {
     },
   });
 }
+
+// ---------- Períodos de pagamento (semanal, quinzenal, mensal) ----------
+export const FREQUENCIAS = { semanal: "Semanal", quinzenal: "Quinzenal", mensal: "Mensal" };
+const dataDeIso = (iso) => { const [a, m, d] = iso.split("-").map(Number); return new Date(a, m - 1, d); };
+const somaDias = (iso, n) => { const d = dataDeIso(iso); d.setDate(d.getDate() + n); return isoLocal(d); };
+
+// Devolve { tipo, inicio, fim, rotulo } do período que contém a data
+export function periodo(tipo, refIso = isoLocal()) {
+  const d = dataDeIso(refIso);
+  let inicio, fim, rotulo;
+  if (tipo === "semanal") {
+    inicio = inicioSemana(d); fim = somaDias(inicio, 6);
+    rotulo = `Semana de ${dataBR(inicio).slice(0, 5)} a ${dataBR(fim).slice(0, 5)}`;
+  } else if (tipo === "quinzenal") {
+    const primeira = d.getDate() <= 15;
+    inicio = isoLocal(new Date(d.getFullYear(), d.getMonth(), primeira ? 1 : 16));
+    fim = primeira ? isoLocal(new Date(d.getFullYear(), d.getMonth(), 15)) : fimMes(d);
+    rotulo = `${primeira ? "1ª" : "2ª"} quinzena de ${nomeMes(inicio).toLowerCase()} (${dataBR(inicio).slice(0, 5)} a ${dataBR(fim).slice(0, 5)})`;
+  } else {
+    inicio = inicioMes(d); fim = fimMes(d);
+    rotulo = nomeMes(inicio);
+  }
+  return { tipo, inicio, fim, rotulo };
+}
+export const periodoAnterior = (p) => periodo(p.tipo, somaDias(p.inicio, -1));
+export const periodoSeguinte = (p) => periodo(p.tipo, somaDias(p.fim, 1));
+export const rotuloPeriodo = (tipo, inicio) => periodo(tipo || "mensal", inicio).rotulo;

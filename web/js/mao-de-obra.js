@@ -2,7 +2,7 @@
 import {
   sb, exigirPapel, sair, modalTrocarSenha, q, rpc, abrirModal,
   moeda, inteiro, dataBR, isoLocal, inicioSemana, inicioMes, nomeMes,
-  selo, esc, $, $$,
+  selo, esc, $, $$, rotuloPeriodo, FREQUENCIAS,
 } from "./comum.js";
 import { NOME_FABRICA } from "../config.js";
 
@@ -38,12 +38,12 @@ fundo.onclick = fecharLateral;
 // ---------- Dados ----------
 async function render() {
   const mes = inicioMes();
-  let abertos, entregasMes, fechamentos, notas;
+  let abertos, entregasMes, pagamentos, notas;
   try {
-    [abertos, entregasMes, fechamentos, notas] = await Promise.all([
+    [abertos, entregasMes, pagamentos, notas] = await Promise.all([
       q(sb.from("v_lotes").select("*").eq("status", "aberto").order("enviado_em")),
       q(sb.from("v_entregas").select("*").eq("mes_ref", mes).order("entregue_em", { ascending: false })),
-      q(sb.from("fechamentos").select("*").order("mes", { ascending: false }).limit(6)),
+      q(sb.from("pagamentos").select("*").order("pago_em", { ascending: false }).limit(8)),
       q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(12)),
     ]);
   } catch (e) { main.innerHTML = `<div class="card vazio">Erro ao carregar: ${esc(e.message)}</div>`; return; }
@@ -54,19 +54,21 @@ async function render() {
   const dia = (e) => isoLocal(new Date(e.entregue_em));
   const doDia = entregasMes.filter((e) => dia(e) === hoje);
   const daSemana = entregasMes.filter((e) => dia(e) >= semana);
-  const fechMes = fechamentos.find((f) => f.mes === mes);
+  const aPagarMes = entregasMes.filter((e) => !e.pago).reduce((t, e) => t + Number(e.valor), 0);
 
   // Menu lateral
   lateral.innerHTML = `
     <div class="section-head" style="margin-bottom:.5rem"><h2 style="margin:0">Meu resumo</h2>
       <button class="icon-btn" id="btnFecharLateral" aria-label="Fechar menu" style="color:var(--muted)">✕</button></div>
     <div class="bloco acumulado"><h3>Saldo a receber</h3><div class="grande">${moeda(valorAberto + valorFinal)}</div>
-      <div class="small" style="opacity:.85">em aberto + finalizado no mês${fechMes ? " · mês <strong>PAGO</strong>" : ""}</div></div>
+      <div class="small" style="opacity:.85">em aberto + finalizado no mês</div>
+      <div class="par small" style="margin-top:.4rem"><span>Finalizado ainda não pago</span><span>${moeda(aPagarMes)}</span></div>
+      <div class="small" style="opacity:.75;margin-top:.2rem">Pagamento ${(FREQUENCIAS[perfil.frequencia_pagamento] || "Mensal").toLowerCase()}</div></div>
     <div class="bloco"><h3>Finalizado hoje</h3><div class="par"><span>${inteiro(soma(doDia, "quantidade"))} peças</span><strong>${moeda(soma(doDia, "valor"))}</strong></div></div>
     <div class="bloco"><h3>Finalizado na semana</h3><div class="par"><span>${inteiro(soma(daSemana, "quantidade"))} peças</span><strong>${moeda(soma(daSemana, "valor"))}</strong></div></div>
     <div class="bloco"><h3>Finalizado no mês</h3><div class="par"><span>${inteiro(soma(entregasMes, "quantidade"))} peças</span><strong>${moeda(valorFinal)}</strong></div></div>
-    ${fechamentos.length ? `<div class="bloco"><h3>Pagamentos recebidos</h3><ul>
-      ${fechamentos.map((f) => `<li><span>${nomeMes(f.mes)}</span><strong>${moeda(f.valor_total)}</strong></li>`).join("")}</ul></div>` : ""}
+    ${pagamentos.length ? `<div class="bloco"><h3>Pagamentos recebidos</h3><ul>
+      ${pagamentos.map((f) => `<li><span>${esc(rotuloPeriodo(f.tipo, f.inicio))}<br><span class="muted">pago em ${dataBR(f.pago_em)}</span></span><strong>${moeda(f.valor_total)}</strong></li>`).join("")}</ul></div>` : ""}
     <div class="acoes" style="margin-top:.4rem">
       <button class="btn sec peq" id="btnSenha">🔑 Trocar senha</button>
       <button class="btn sec peq" id="btnSair">Sair</button>
@@ -81,7 +83,7 @@ async function render() {
       <button class="btn sec peq" id="btnResumo">📊 Meu resumo</button></div>
     ${notas.length ? `<div class="section"><h2>📩 Notas de pagamento ${notas.some((n) => !n.lida_em) ? `<span class="selo aberto">${notas.filter((n) => !n.lida_em).length} nova(s)</span>` : ""}</h2>
       ${notas.slice(0, 4).map((n) => `<div class="nota-item ${n.lida_em ? "" : "nao-lida"}">
-        <span><strong>Fechamento de ${nomeMes(n.mes).toLowerCase()}</strong><br><span class="small muted">Enviada em ${dataBR(n.enviada_em)} · ${inteiro(n.quantidade)} peças</span></span>
+        <span><strong>Fechamento — ${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}</strong><br><span class="small muted">Enviada em ${dataBR(n.enviada_em)} · ${inteiro(n.quantidade)} peças</span></span>
         <span style="display:flex;gap:.6rem;align-items:center"><strong class="num">${moeda(n.valor_total)}</strong><button class="btn ${n.lida_em ? "sec" : ""} peq" data-nota="${n.id}">Ver nota</button></span>
       </div>`).join("")}</div>` : ""}
     <div class="totais">
@@ -100,7 +102,7 @@ async function render() {
     </div>
     <div class="section"><h2>Finalizado em ${nomeMes(mes).toLowerCase()}</h2>
       ${entregasMes.length ? `<div class="card"><ul class="lista-final">${entregasMes.map((e) => `
-        <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)} – ${inteiro(e.quantidade)} pç ${selo(e.tipo === "pronto" ? "pronto" : "parcial", e.tipo === "pronto" ? "Lote pronto" : "Parcial")}</span>
+        <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)} – ${inteiro(e.quantidade)} pç ${selo(e.tipo === "pronto" ? "pronto" : "parcial", e.tipo === "pronto" ? "Lote pronto" : "Parcial")}${e.pago ? " " + selo("pago", "Pago") : ""}</span>
           <strong class="num">${moeda(e.valor)}</strong></li>`).join("")}</ul>
         <div class="soma-final"><span>TOTAL FINALIZADO NO MÊS</span><span>${moeda(valorFinal)}</span></div></div>`
         : `<div class="card vazio">Nada finalizado neste mês ainda.</div>`}
@@ -112,7 +114,7 @@ async function render() {
 function verNota(n) {
   const itens = Array.isArray(n.itens) ? n.itens : [];
   abrirModal({
-    titulo: `Fechamento de ${nomeMes(n.mes).toLowerCase()}`,
+    titulo: `Fechamento — ${n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes)}`,
     conteudo: `
       <div class="nota-previa">
         <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Enviada em ${dataBR(n.enviada_em)}</span></div>

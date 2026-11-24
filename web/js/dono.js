@@ -2,6 +2,7 @@ import {
   sb, exigirPapel, sair, modalTrocarSenha, adminUsuarios, rpc, q,
   moeda, inteiro, dataBR, dataHoraBR, inicioMes, nomeMes,
   selo, esc, $, $$, aviso, abrirModal, confirmar,
+  isoLocal, periodo, periodoAnterior, periodoSeguinte, rotuloPeriodo, FREQUENCIAS,
 } from "./comum.js";
 import { NOME_FABRICA } from "../config.js";
 
@@ -13,7 +14,6 @@ $("#btnSenha").onclick = () => modalTrocarSenha(perfil.usuario);
 
 const main = $("#conteudo");
 let abaAtual = "inicio";
-let mesFechamento = inicioMes().slice(0, 7);
 
 const diaMes = (d) => dataBR(d).slice(0, 5);
 const maiusc = (t) => String(t ?? "").toUpperCase();
@@ -92,11 +92,10 @@ async function renderInicio() {
 // ---------------------------------------------------------------
 async function abrirFicha(moId) {
   const mes = inicioMes();
-  const [[mo], abertos, entregasMes, [fech]] = await Promise.all([
+  const [[mo], abertos, entregasMes] = await Promise.all([
     q(sb.from("perfis").select("*").eq("id", moId)),
     q(sb.from("v_lotes").select("*").eq("mao_de_obra_id", moId).eq("status", "aberto").order("enviado_em")),
     q(sb.from("v_entregas").select("*").eq("mao_de_obra_id", moId).eq("mes_ref", mes).order("entregue_em", { ascending: false })),
-    q(sb.from("fechamentos").select("*").eq("mao_de_obra_id", moId).eq("mes", mes)),
   ]);
 
   const valorAberto = soma(abertos, "valor_aberto");
@@ -147,11 +146,11 @@ async function abrirFicha(moId) {
           </div>
         </div>`).join("") : `<p class="muted">Nenhum lote em aberto.</p>`}
 
-      <h3 style="margin-top:1.2rem">Finalizado em ${nomeMes(mes).toLowerCase()} ${fech ? selo("pago", "Pago em " + dataBR(fech.pago_em)) : ""}</h3>
+      <h3 style="margin-top:1.2rem">Finalizado em ${nomeMes(mes).toLowerCase()} ${entregasMes.length && entregasMes.every((e) => e.pago) ? selo("pago", "Tudo pago") : ""}</h3>
       ${entregasMes.length ? `<ul class="lista-final">${entregasMes.map((e) => `
         <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)} – ${inteiro(e.quantidade)} pç ${selo(e.tipo === "pronto" ? "pronto" : "parcial", e.tipo === "pronto" ? "Lote pronto" : "Parcial")}</span>
           <span style="white-space:nowrap"><strong class="num">${moeda(e.valor)}</strong>
-          ${fech ? "" : `<button type="button" class="icon-btn" style="color:var(--muted);font-size:1rem" data-desfazer="${e.id}" title="Desfazer">↺</button>`}</span></li>`).join("")}</ul>`
+          ${e.pago ? selo("pago", "Pago") : `<button type="button" class="icon-btn" style="color:var(--muted);font-size:1rem" data-desfazer="${e.id}" title="Desfazer">↺</button>`}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nada finalizado neste mês ainda.</p>`}
       <div class="soma-final"><span>TOTAL FINALIZADO NO MÊS</span><span>${moeda(valorFinal)}</span></div>`,
   });
@@ -541,11 +540,12 @@ async function renderMaos() {
     <div class="section-head"><span class="muted small">Cada mão de obra entra no painel dela com usuário e senha.</span>
       <button class="btn" id="novoMo">＋ Nova mão de obra</button></div>
     ${maos.length ? `<div class="card tabela-wrap"><table>
-      <thead><tr><th>Nome</th><th>Usuário</th><th>WhatsApp</th><th>Endereço</th><th>Chave PIX</th><th>Situação</th><th></th></tr></thead>
+      <thead><tr><th>Nome</th><th>Usuário</th><th>WhatsApp</th><th>Endereço</th><th>Chave PIX</th><th>Pagamento</th><th>Situação</th><th></th></tr></thead>
       <tbody>${maos.map((m) => `<tr>
         <td><strong>${esc(m.nome)}</strong></td><td>${esc(m.usuario)}</td>
         <td>${m.whatsapp ? `<a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : "—"}</td>
         <td class="small">${esc(m.endereco || "—")}</td><td class="small">${esc(m.pix || "—")}</td>
+        <td class="small">${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</td>
         <td>${m.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
         <td class="right" style="white-space:nowrap">
           <button class="btn sec peq" data-ed="${m.id}">Editar</button>
@@ -559,7 +559,11 @@ async function renderMaos() {
       <div><label>WhatsApp</label><input name="whatsapp" value="${esc(m.whatsapp)}" inputmode="tel" placeholder="(11) 99999-9999"></div>
       <div><label>Chave PIX</label><input name="pix" value="${esc(m.pix)}" placeholder="CPF, telefone, e-mail ou aleatória"></div>
     </div>
-    <div class="linha"><div><label>Endereço</label><input name="endereco" value="${esc(m.endereco)}"></div></div>`;
+    <div class="linha">
+      <div><label>Endereço</label><input name="endereco" value="${esc(m.endereco)}"></div>
+      <div><label>Forma de pagamento</label><select name="frequencia_pagamento">${Object.entries(FREQUENCIAS).map(([k, t]) =>
+        `<option value="${k}" ${(m.frequencia_pagamento || "mensal") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+    </div>`;
 
   $("#novoMo").onclick = () => abrirModal({
     titulo: "Nova mão de obra",
@@ -570,7 +574,10 @@ async function renderMaos() {
       </div>
       <button type="submit" class="btn bloco">Criar acesso</button>`,
     onSubmit: async (fd) => {
-      await adminUsuarios({ acao: "criar", ...Object.fromEntries(fd) });
+      const novo = await adminUsuarios({ acao: "criar", ...Object.fromEntries(fd) });
+      if (novo?.id && fd.get("frequencia_pagamento")) {
+        await q(sb.from("perfis").update({ frequencia_pagamento: fd.get("frequencia_pagamento") }).eq("id", novo.id));
+      }
       aviso(`Acesso criado! Usuário: ${String(fd.get("usuario")).trim().toLowerCase()}`);
       renderMaos();
     },
@@ -586,6 +593,7 @@ async function renderMaos() {
         if (!fd.get("nome")) throw new Error("Informe o nome.");
         await q(sb.from("perfis").update({
           nome: fd.get("nome"), whatsapp: fd.get("whatsapp") || null, pix: fd.get("pix") || null, endereco: fd.get("endereco") || null,
+          frequencia_pagamento: fd.get("frequencia_pagamento") || "mensal",
         }).eq("id", m.id));
         aviso("Salvo!"); renderMaos();
       },
@@ -704,88 +712,127 @@ const nomeDe = (lista, id) => lista.find((x) => x.id == id)?.nome ?? "";
 // ===============================================================
 // FECHAMENTOS — por mão de obra, produto e serviço, no mês
 // ===============================================================
+let tipoFech = "mensal";
+let refFech = isoLocal();
+
 async function renderFechamentos() {
-  const mes = `${mesFechamento}-01`;
-  const [itens, resumo, maos] = await Promise.all([
-    q(sb.from("v_fechamento").select("*").eq("mes", mes).order("produto_nome").order("servico_nome")),
-    q(sb.from("v_resumo_mensal").select("*").eq("mes", mes)),
+  const p = periodo(tipoFech, refFech);
+  const [entregas, abertos, maos, pags] = await Promise.all([
+    q(sb.from("v_entregas").select("*").gte("dia", p.inicio).lte("dia", p.fim).order("produto_nome").order("servico_nome")),
+    q(sb.from("v_lotes").select("mao_de_obra_id, valor_aberto").eq("status", "aberto")),
     carregarMaos(false),
+    q(sb.from("pagamentos").select("*").lte("inicio", p.fim).gte("fim", p.inicio).order("pago_em")),
   ]);
-  const total = soma(resumo, "valor_total");
-  const pago = resumo.filter((r) => r.pago_em).reduce((s, r) => s + Number(r.valor_total), 0);
-  const porMao = {};
-  itens.forEach((i) => { (porMao[i.mao_de_obra_id] ??= []).push(i); });
-  const valorDe = (id) => resumo.find((r) => r.mao_de_obra_id === id);
-  // Mostra todas as mãos de obra ativas + quem teve entrega no mês (mesmo inativa)
-  const lista = maos.filter((m) => m.ativo || valorDe(m.id));
+  const por = {};
+  const g = (id) => (por[id] ??= { total: 0, pago: 0, qtd: 0, aberto: 0, entregas: [] });
+  entregas.forEach((e) => { const x = g(e.mao_de_obra_id); x.total += Number(e.valor); x.qtd += e.quantidade; if (e.pago) x.pago += Number(e.valor); x.entregas.push(e); });
+  abertos.forEach((l) => { g(l.mao_de_obra_id).aberto += Number(l.valor_aberto); });
+  const lista = maos.filter((m) => m.ativo || por[m.id]?.total);
+  const tot = Object.values(por).reduce((a, x) => ({ total: a.total + x.total, pago: a.pago + x.pago, aberto: a.aberto + x.aberto }), { total: 0, pago: 0, aberto: 0 });
 
   main.innerHTML = `
     <div class="titulo-pagina">Fechamentos</div>
-    <div class="section-head"><span class="muted small">Valor a receber de cada mão de obra no mês (entregas parciais + lotes prontos).</span>
-      <input type="month" id="mesSel" value="${mesFechamento}" style="width:auto"></div>
+    <div class="barra-periodo">
+      <div class="seg">${Object.entries(FREQUENCIAS).map(([k, t]) => `<button class="${k === tipoFech ? "ativo" : ""}" data-tipo="${k}">${t}</button>`).join("")}</div>
+      <div class="nav-periodo">
+        <button class="btn sec peq" id="perAnt" title="Período anterior">◀</button>
+        <strong>${esc(p.rotulo)}</strong>
+        <button class="btn sec peq" id="perSeg" title="Próximo período">▶</button>
+        <button class="btn sec peq" id="perHoje">Hoje</button>
+      </div>
+    </div>
     <div class="totais">
-      <div class="total escuro"><div class="r">Total de ${nomeMes(mes).toLowerCase()}</div><div class="v">${moeda(total)}</div></div>
-      <div class="total"><div class="r">Já pago</div><div class="v">${moeda(pago)}</div></div>
-      <div class="total amarelo"><div class="r">Falta pagar</div><div class="v">${moeda(total - pago)}</div></div>
+      <div class="total escuro"><div class="r">Finalizado no período</div><div class="v">${moeda(tot.total)}</div></div>
+      <div class="total"><div class="r">Já pago</div><div class="v">${moeda(tot.pago)}</div></div>
+      <div class="total amarelo"><div class="r">Falta pagar</div><div class="v">${moeda(tot.total - tot.pago)}</div></div>
+      <div class="total"><div class="r">Em aberto com as mãos de obra</div><div class="v">${moeda(tot.aberto)}</div></div>
     </div>
     ${lista.length ? `<div class="grade-fech">${lista.map((m) => {
-      const r = valorDe(m.id);
-      return `<button class="cartao-fech ${r ? "" : "zerado"}" data-det="${m.id}">
-        <span class="nome">${esc(maiusc(m.nome))}</span>
-        <span class="valor">R$ <b>${moeda(r ? r.valor_total : 0).replace("R$", "").trim()}</b></span>
-        ${r?.pago_em ? `<span class="tag-pago">PAGO</span>` : ""}
+      const x = por[m.id] || { total: 0, pago: 0, aberto: 0 };
+      const falta = x.total - x.pago;
+      return `<button class="cartao-fech ${x.total ? "" : "zerado"}" data-det="${m.id}">
+        <span class="nome">${esc(maiusc(m.nome))}<small>${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</small></span>
+        <span class="valor">R$ <b>${moeda(x.total).replace("R$", "").trim()}</b></span>
+        <span class="extra">${[x.total && !falta ? "✓ tudo pago" : x.pago ? `falta pagar ${moeda(falta)}` : "", x.aberto ? `em aberto ${moeda(x.aberto)}` : ""].filter(Boolean).join(" · ")}&nbsp;</span>
+        ${x.total && !falta ? `<span class="tag-pago">PAGO</span>` : ""}
       </button>`;
-    }).join("")}</div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
+    }).join("")}</div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}
+    <p class="muted small" style="text-align:center">Verde = já finalizado no período (entregas parciais + lotes prontos). "Em aberto" = lotes que ainda estão com ela.</p>`;
 
-  $("#mesSel").onchange = (e) => { mesFechamento = e.target.value || mesFechamento; renderFechamentos(); };
+  $$("[data-tipo]", main).forEach((b) => (b.onclick = () => { tipoFech = b.dataset.tipo; renderFechamentos(); }));
+  $("#perAnt").onclick = () => { refFech = periodoAnterior(p).inicio; renderFechamentos(); };
+  $("#perSeg").onclick = () => { refFech = periodoSeguinte(p).inicio; renderFechamentos(); };
+  $("#perHoje").onclick = () => { refFech = isoLocal(); renderFechamentos(); };
   $$("[data-det]", main).forEach((b) => (b.onclick = () => {
     const mo = maos.find((x) => x.id === b.dataset.det);
-    const r = valorDe(mo.id) || { mao_de_obra_id: mo.id, mao_de_obra_nome: mo.nome, quantidade: 0, valor_total: 0 };
-    detalheFechamento(r, porMao[mo.id] || [], mo, mes);
+    detalheFechamento(mo, por[mo.id] || { total: 0, pago: 0, qtd: 0, aberto: 0, entregas: [] }, pags.filter((x) => x.mao_de_obra_id === mo.id), p);
   }));
 }
 
-function detalheFechamento(r, linhas, mo, mes) {
+// Agrupa entregas por produto + serviço + preço
+function agruparEntregas(entregas) {
+  const m = {};
+  entregas.forEach((e) => {
+    const k = `${e.produto_nome}|${e.servico_nome}|${e.valor_unitario}`;
+    m[k] ??= { produto_nome: e.produto_nome, servico_nome: e.servico_nome, valor_unitario: e.valor_unitario, quantidade: 0, valor: 0, pago: 0 };
+    m[k].quantidade += e.quantidade; m[k].valor += Number(e.valor); if (e.pago) m[k].pago += Number(e.valor);
+  });
+  return Object.values(m).sort((a, b) => (a.produto_nome + a.servico_nome).localeCompare(b.produto_nome + b.servico_nome));
+}
+
+function detalheFechamento(mo, x, pags, p) {
+  const linhas = agruparEntregas(x.entregas);
+  const falta = x.total - x.pago;
+  const r = { mao_de_obra_nome: mo.nome, quantidade: x.qtd, valor_total: x.total };
   const m = abrirModal({
-    titulo: `${maiusc(mo.nome)} — ${nomeMes(mes)}`,
+    titulo: `${maiusc(mo.nome)} — ${p.rotulo}`,
     largo: true,
     conteudo: `
-      <div class="ficha-topo"><div class="ficha-contato">${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong>` : ""}</div>
-        <span>${r.pago_em ? selo("pago", "Pago em " + dataBR(r.pago_em)) : linhas.length ? selo("aberto", "A pagar") : ""}</span></div>
+      <div class="ficha-topo"><div class="ficha-contato">${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong> · ` : ""}Pagamento ${(FREQUENCIAS[mo.frequencia_pagamento] || "Mensal").toLowerCase()}</div>
+        <span>${x.total ? (falta ? selo("aberto", `Falta pagar ${moeda(falta)}`) : selo("pago", "Tudo pago")) : ""}</span></div>
+      ${x.aberto ? `<p class="small" style="margin:.4rem 0 0">Em aberto com ela agora (ainda não finalizado): <strong>${moeda(x.aberto)}</strong></p>` : ""}
       ${linhas.length ? `<div class="tabela-wrap" style="margin-top:.6rem"><table>
-        <thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
+        <thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th><th>Situação</th></tr></thead>
         <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td>
-          <td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="right num">${inteiro(r.quantidade)}</td><td></td><td class="right num">${moeda(r.valor_total)}</td></tr></tfoot>
-      </table></div>
-      <div class="acoes">
-        ${r.pago_em ? `<button type="button" class="btn perigo peq" id="fReabrir">Reabrir</button>`
-          : `<button type="button" class="btn ok peq" id="fPagar">Marcar como pago</button>`}
+          <td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td>
+          <td>${i.pago >= i.valor ? selo("pago", "Pago") : i.pago ? selo("aberto", "Parte paga") : selo("aberto", "A pagar")}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="right num">${inteiro(x.qtd)}</td><td></td><td class="right num">${moeda(x.total)}</td><td></td></tr></tfoot>
+      </table></div>` : `<p class="muted">Nada finalizado neste período.</p>`}
+      ${pags.length ? `<h3 style="margin-top:1rem">Pagamentos registrados</h3><ul class="lista-final">${pags.map((pg) => `<li>
+        <span>${dataBR(pg.pago_em)} – ${esc(rotuloPeriodo(pg.tipo, pg.inicio))}<br><span class="small muted">${inteiro(pg.quantidade)} peças</span></span>
+        <span style="display:flex;gap:.5rem;align-items:center"><strong class="num">${moeda(pg.valor_total)}</strong>
+        <button type="button" class="btn perigo peq" data-desfpag="${pg.id}">Desfazer</button></span></li>`).join("")}</ul>` : ""}
+      ${linhas.length ? `<div class="acoes">
+        ${falta > 0 ? `<button type="button" class="btn ok" id="fPagar">✓ Marcar ${moeda(falta)} como pago</button>` : ""}
         <button type="button" class="btn acento peq" id="fNota">📩 Enviar nota</button>
         <button type="button" class="btn sec peq" id="fRecibo">🖨️ Recibo</button>
-      </div>` : `<p class="muted">Nada finalizado neste mês.</p>`}`,
+      </div>` : ""}`,
   });
   const f = m.form;
   $("#fPagar", f)?.addEventListener("click", async () => {
-    if (!(await confirmar(`Marcar ${moeda(r.valor_total)} de ${r.mao_de_obra_nome} (${nomeMes(mes).toLowerCase()}) como pago? As entregas deste mês ficam travadas.`, "Marcar como pago"))) return;
-    try { await rpc("fechar_mes", { p_mao_de_obra: r.mao_de_obra_id, p_mes: mes }); aviso("Marcado como pago!"); m.fechar(); renderFechamentos(); }
+    if (!(await confirmar(`Marcar ${moeda(falta)} de ${mo.nome} (${p.rotulo}) como pago? Essas entregas ficam travadas.`, "Marcar como pago"))) return;
+    try { await rpc("pagar_periodo", { p_mao_de_obra: mo.id, p_inicio: p.inicio, p_fim: p.fim, p_tipo: p.tipo }); aviso("Pagamento registrado!"); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
   });
-  $("#fReabrir", f)?.addEventListener("click", async () => {
-    if (!(await confirmar("Reabrir este fechamento? Ele volta para 'a pagar'.", "Reabrir"))) return;
-    try { await rpc("reabrir_mes", { p_fechamento: Number(r.fechamento_id) }); aviso("Fechamento reaberto."); m.fechar(); renderFechamentos(); }
+  $$("[data-desfpag]", f).forEach((b) => (b.onclick = async () => {
+    if (!(await confirmar("Desfazer este pagamento? As entregas voltam para 'a pagar'.", "Desfazer"))) return;
+    try { await rpc("desfazer_pagamento", { p_pagamento: Number(b.dataset.desfpag) }); aviso("Pagamento desfeito."); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
+  }));
+  $("#fRecibo", f)?.addEventListener("click", () => imprimirRecibo(r, linhas, mo, p.rotulo));
+  $("#fNota", f)?.addEventListener("click", () => {
+    m.fechar(); abaAtual = "admin";
+    $$("#abas button").forEach((b) => b.classList.toggle("ativo", b.dataset.aba === "admin"));
+    renderAdmin({ moId: mo.id, tipo: p.tipo, ref: p.inicio });
   });
-  $("#fRecibo", f)?.addEventListener("click", () => imprimirRecibo(r, linhas, mo, mes));
-  $("#fNota", f)?.addEventListener("click", () => { m.fechar(); abaAtual = "admin"; $$("#abas button").forEach((x) => x.classList.toggle("ativo", x.dataset.aba === "admin")); renderAdmin({ moId: mo.id, mes: mes.slice(0, 7) }); });
 }
 
-function imprimirRecibo(r, linhas, mo, mes) {
+function imprimirRecibo(r, linhas, mo, rotulo) {
   const w = window.open("", "_blank");
-  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Recibo ${esc(r.mao_de_obra_nome)} ${nomeMes(mes)}</title>
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Recibo ${esc(r.mao_de_obra_nome)} ${esc(rotulo)}</title>
     <link rel="stylesheet" href="${new URL("css/style.css", location.href)}"></head><body style="background:#fff;padding:1.5rem">
     <h1>${esc(NOME_FABRICA)} — Recibo de serviços</h1>
-    <p><strong>Mão de obra:</strong> ${esc(r.mao_de_obra_nome)}${mo.pix ? `<br><strong>PIX:</strong> ${esc(mo.pix)}` : ""}<br><strong>Período:</strong> ${nomeMes(mes)}</p>
+    <p><strong>Mão de obra:</strong> ${esc(r.mao_de_obra_nome)}${mo.pix ? `<br><strong>PIX:</strong> ${esc(mo.pix)}` : ""}<br><strong>Período:</strong> ${esc(rotulo)}</p>
     <table><thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
     <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right">${inteiro(i.quantidade)}</td><td class="right">${moeda(i.valor_unitario)}</td><td class="right">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
     <tfoot><tr><td colspan="2">Total</td><td class="right">${inteiro(r.quantidade)}</td><td></td><td class="right">${moeda(r.valor_total)}</td></tr></tfoot></table>
@@ -804,20 +851,32 @@ async function renderAdmin(pre = {}) {
     carregarMaos(false),
     q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(15)),
   ]);
-  const mesPag = pre.mes || inicioMes().slice(0, 7);
   const nomeMo = (id) => maos.find((m) => m.id === id)?.nome ?? "—";
 
   main.innerHTML = `
     <div class="titulo-pagina">Administrativo</div>
     <div class="card section" id="cardPagamentos">
       <h2>📩 Pagamentos</h2>
-      <p class="muted small" style="margin-top:0">Escolha a mão de obra e envie a notinha de fechamento do mês. Ela aparece no painel da mão de obra.</p>
+      <p class="muted small" style="margin-top:0">Escolha a mão de obra e o período e envie a notinha de fechamento. Ela aparece no painel da mão de obra.</p>
       <div class="linha" style="grid-template-columns:2fr 1fr">
         <div><label>Mão de obra</label><select id="pagMo"><option value="">Selecione…</option>
           ${maos.filter((m) => m.ativo || m.id === pre.moId).map((m) => `<option value="${m.id}" ${m.id === pre.moId ? "selected" : ""}>${esc(m.nome)}</option>`).join("")}</select></div>
-        <div><label>Mês</label><input type="month" id="pagMes" value="${mesPag}"></div>
+        <div><label>Período</label><select id="pagTipo">${Object.entries(FREQUENCIAS).map(([k, t]) => `<option value="${k}" ${k === (pre.tipo || "mensal") ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      </div>
+      <div class="nav-periodo" style="margin-bottom:.7rem">
+        <button class="btn sec peq" id="pagAnt" type="button">◀</button><strong id="pagRotulo"></strong><button class="btn sec peq" id="pagSeg" type="button">▶</button>
       </div>
       <div id="pagPrevia"></div>
+    </div>
+
+    <div class="card section" id="cardRelatorio">
+      <div class="section-head"><h2 style="margin:0">📊 Relatório mensal</h2>
+        <span style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <input type="month" id="relMes" value="${inicioMes().slice(0, 7)}" style="width:auto">
+          <button class="btn sec peq" id="relImprimir" type="button">🖨️ Imprimir / salvar PDF</button>
+        </span></div>
+      <p class="muted small" style="margin-top:.3rem">Tudo o que o Bruno pegou das empresas e tudo o que repassou às mãos de obra no mês.</p>
+      <div id="relConteudo"><p class="muted small">Carregando…</p></div>
     </div>
 
     <div class="grid-admin">
@@ -854,7 +913,7 @@ async function renderAdmin(pre = {}) {
         <div class="card">
           <h2>Notas enviadas</h2>
           ${notas.length ? `<ul class="lista-final">${notas.map((n) => `<li>
-            <span>${dataBR(n.enviada_em)} – <strong>${esc(nomeMo(n.mao_de_obra_id))}</strong> – ${nomeMes(n.mes).split(" ")[0].toLowerCase()}<br>
+            <span>${dataBR(n.enviada_em)} – <strong>${esc(nomeMo(n.mao_de_obra_id))}</strong> – ${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}<br>
               <span class="small muted">${inteiro(n.quantidade)} peças · ${moeda(n.valor_total)}</span></span>
             ${n.lida_em ? selo("pronto", "Lida") : selo("aberto", "Não lida")}</li>`).join("")}</ul>`
             : `<p class="muted small">Nenhuma nota enviada ainda.</p>`}
@@ -863,7 +922,8 @@ async function renderAdmin(pre = {}) {
     </div>`;
 
   ligarCalculadora();
-  ligarPagamentos(maos);
+  ligarPagamentos(maos, pre);
+  ligarRelatorio();
 
   $("#btnAbrirPlanilha").onclick = () => window.open(conf.link_planilha, "_blank", "noopener");
   $("#btnBackupAgora").onclick = () => {
@@ -886,31 +946,34 @@ async function renderAdmin(pre = {}) {
 }
 
 // Monta a prévia da nota e envia
-function ligarPagamentos(maos) {
-  const selMo = $("#pagMo"), selMes = $("#pagMes"), area = $("#pagPrevia");
-  const textoWhats = (mo, mes, linhas, total, qtd, msg) =>
-    `Olá, ${mo.nome.split(" ")[0]}! Segue o fechamento de ${nomeMes(mes).toLowerCase()} — ${NOME_FABRICA}:\n\n` +
+function ligarPagamentos(maos, pre = {}) {
+  const selMo = $("#pagMo"), selTipo = $("#pagTipo"), area = $("#pagPrevia");
+  let per = periodo(selTipo.value, pre.ref || isoLocal());
+  const textoWhats = (mo, linhas, total, qtd, msg) =>
+    `Olá, ${mo.nome.split(" ")[0]}! Segue o fechamento — ${per.rotulo} — ${NOME_FABRICA}:\n\n` +
     linhas.map((i) => `• ${i.produto_nome} – ${i.servico_nome}: ${inteiro(i.quantidade)} pç × ${moeda(i.valor_unitario)} = ${moeda(i.valor)}`).join("\n") +
     `\n\nTotal: ${inteiro(qtd)} peças — *${moeda(total)}*` + (msg ? `\n\n${msg}` : "") +
     `\n\nVocê também pode ver esta nota no seu painel.`;
 
   const carregar = async () => {
+    $("#pagRotulo").textContent = per.rotulo;
     const mo = maos.find((m) => m.id === selMo.value);
     if (!mo) { area.innerHTML = ""; return; }
-    const mes = `${selMes.value || inicioMes().slice(0, 7)}-01`;
     area.innerHTML = `<p class="muted small">Carregando…</p>`;
-    let linhas;
-    try { linhas = await q(sb.from("v_fechamento").select("*").eq("mao_de_obra_id", mo.id).eq("mes", mes).order("produto_nome").order("servico_nome")); }
+    let entregas;
+    try { entregas = await q(sb.from("v_entregas").select("*").eq("mao_de_obra_id", mo.id).gte("dia", per.inicio).lte("dia", per.fim)); }
     catch (e) { area.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; return; }
-    if (!linhas.length) { area.innerHTML = `<div class="alerta">${esc(mo.nome)} não tem nada finalizado em ${nomeMes(mes).toLowerCase()}.</div>`; return; }
-    const total = soma(linhas, "valor"), qtd = soma(linhas, "quantidade");
+    const linhas = agruparEntregas(entregas);
+    if (!linhas.length) { area.innerHTML = `<div class="alerta">${esc(mo.nome)} não tem nada finalizado em: ${esc(per.rotulo)}.</div>`; return; }
+    const total = soma(linhas, "valor"), qtd = soma(linhas, "quantidade"), pago = soma(linhas, "pago");
     area.innerHTML = `
       <div class="nota-previa">
-        <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Fechamento de ${nomeMes(mes).toLowerCase()}</span></div>
+        <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Fechamento — ${esc(per.rotulo)}</span></div>
         <div class="small" style="margin-bottom:.4rem">Para: <strong>${esc(mo.nome)}</strong>${mo.pix ? ` · PIX: ${esc(mo.pix)}` : ""}</div>
         <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
           <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)} · ${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
           <tfoot><tr><td>Total</td><td class="right num">${inteiro(qtd)}</td><td></td><td class="right num">${moeda(total)}</td></tr></tfoot></table>
+        ${pago ? `<p class="small muted" style="margin:.4rem 0 0">Já pago neste período: ${moeda(pago)} · falta: ${moeda(total - pago)}</p>` : ""}
       </div>
       <div class="linha" style="margin-top:.7rem"><div><label>Mensagem (opcional)</label><input id="pagMsg" placeholder="Ex.: O PIX cai até sexta-feira."></div></div>
       <label class="check-whats ${mo.whatsapp ? "" : "desab"}"><input type="checkbox" id="pagWhats" ${mo.whatsapp ? "" : "disabled"}>
@@ -922,14 +985,109 @@ function ligarPagamentos(maos) {
       const janela = whats ? window.open("about:blank", "_blank") : null; // abre já, para o navegador não bloquear
       btn.disabled = true;
       try {
-        await rpc("enviar_nota", { p_mao_de_obra: mo.id, p_mes: mes, p_mensagem: msg || null });
-        if (janela) janela.location.href = `${linkWhats(mo.whatsapp)}?text=${encodeURIComponent(textoWhats(mo, mes, linhas, total, qtd, msg))}`;
+        await rpc("enviar_nota", { p_mao_de_obra: mo.id, p_inicio: per.inicio, p_fim: per.fim, p_tipo: per.tipo, p_mensagem: msg || null });
+        if (janela) janela.location.href = `${linkWhats(mo.whatsapp)}?text=${encodeURIComponent(textoWhats(mo, linhas, total, qtd, msg))}`;
         aviso(whats ? "Nota enviada! Confira o WhatsApp que abriu." : "Nota enviada para o painel dela!");
-        renderAdmin({ moId: mo.id, mes: mes.slice(0, 7) });
+        renderAdmin({ moId: mo.id, tipo: per.tipo, ref: per.inicio });
       } catch (e) { janela?.close(); aviso(e.message, true); btn.disabled = false; }
     };
   };
-  selMo.onchange = selMes.onchange = carregar;
+  selMo.onchange = () => {
+    const mo = maos.find((m) => m.id === selMo.value);
+    if (mo && !pre.tipo) { selTipo.value = mo.frequencia_pagamento || "mensal"; per = periodo(selTipo.value, isoLocal()); }
+    carregar();
+  };
+  selTipo.onchange = () => { per = periodo(selTipo.value, per.inicio); carregar(); };
+  $("#pagAnt").onclick = () => { per = periodoAnterior(per); carregar(); };
+  $("#pagSeg").onclick = () => { per = periodoSeguinte(per); carregar(); };
+  carregar();
+}
+
+// Relatório mensal: o que entrou das empresas x o que foi repassado às mãos de obra
+function ligarRelatorio() {
+  const sel = $("#relMes"), area = $("#relConteudo");
+  let html = "";
+  const carregar = async () => {
+    const mes = `${sel.value || inicioMes().slice(0, 7)}-01`;
+    const [a, m] = mes.split("-").map(Number);
+    const prox = `${m === 12 ? a + 1 : a}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
+    area.innerHTML = `<p class="muted small">Carregando…</p>`;
+    let entradas, entregas, lotes;
+    try {
+      [entradas, entregas, lotes] = await Promise.all([
+        q(sb.from("v_entradas").select("*").eq("mes_ref", mes).order("empresa_nome").order("produto_nome").order("servico_nome")),
+        q(sb.from("v_entregas").select("*").eq("mes_ref", mes).order("mao_de_obra_nome")),
+        q(sb.from("v_lotes").select("servico_id, produto_nome, servico_nome, quantidade, status").gte("enviado_em", `${mes}T00:00:00-03:00`).lt("enviado_em", `${prox}T00:00:00-03:00`)),
+      ]);
+    } catch (e) { area.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; return; }
+    const receita = soma(entradas, "valor_total"), custo = soma(entregas, "valor");
+    const pago = entregas.filter((e) => e.pago).reduce((s2, e) => s2 + Number(e.valor), 0);
+    const lotesValidos = lotes.filter((l) => l.status !== "cancelado");
+
+    // Agrupamentos
+    const porEmpresa = {};
+    entradas.forEach((e) => {
+      const k = `${e.produto_nome}|${e.servico_nome}|${e.valor_unitario}`;
+      porEmpresa[e.empresa_nome] ??= {};
+      porEmpresa[e.empresa_nome][k] ??= { ps: `${e.produto_nome} · ${e.servico_nome}`, qtd: 0, unit: e.valor_unitario, total: 0 };
+      porEmpresa[e.empresa_nome][k].qtd += e.quantidade; porEmpresa[e.empresa_nome][k].total += Number(e.valor_total);
+    });
+    const porMao = {};
+    entregas.forEach((e) => { (porMao[e.mao_de_obra_nome] ??= []).push(e); });
+    const porServ = {};
+    const sv = (prod, serv) => (porServ[`${prod} · ${serv}`] ??= { entrou: 0, enviado: 0, finalizado: 0, receita: 0, custo: 0 });
+    entradas.forEach((e) => { const x = sv(e.produto_nome, e.servico_nome); x.entrou += e.quantidade; x.receita += Number(e.valor_total); });
+    lotesValidos.forEach((l) => { sv(l.produto_nome, l.servico_nome).enviado += l.quantidade; });
+    entregas.forEach((e) => { const x = sv(e.produto_nome, e.servico_nome); x.finalizado += e.quantidade; x.custo += Number(e.valor); });
+
+    const tabela = (cab, linhas, rodape = "") => `<div class="tabela-wrap"><table><thead><tr>${cab}</tr></thead><tbody>${linhas}</tbody>${rodape}</table></div>`;
+    html = `
+      <div class="totais">
+        <div class="total escuro"><div class="r">Recebe das empresas</div><div class="v">${moeda(receita)}</div></div>
+        <div class="total"><div class="r">Custo mão de obra (finalizado)</div><div class="v">${moeda(custo)}</div></div>
+        <div class="total ${receita - custo >= 0 ? "verde" : "amarelo"}"><div class="r">Lucro estimado</div><div class="v">${moeda(receita - custo)}</div></div>
+      </div>
+      <p class="small muted">Peças recebidas: <strong>${inteiro(soma(entradas, "quantidade"))}</strong> · enviadas em lotes: <strong>${inteiro(soma(lotesValidos, "quantidade"))}</strong> ·
+        finalizadas: <strong>${inteiro(soma(entregas, "quantidade"))}</strong> · já pago às mãos de obra: <strong>${moeda(pago)}</strong> (falta ${moeda(custo - pago)})</p>
+
+      <h3>1. Serviço que o Bruno pegou (por empresa)</h3>
+      ${entradas.length ? tabela(`<th>Empresa</th><th>Produto · serviço</th><th class="right">Peças</th><th class="right">R$/peça</th><th class="right">Total</th>`,
+        Object.entries(porEmpresa).map(([emp, itens]) => {
+          const lst = Object.values(itens);
+          return lst.map((i, n) => `<tr><td>${n ? "" : `<strong>${esc(emp)}</strong>`}</td><td>${esc(i.ps)}</td><td class="right num">${inteiro(i.qtd)}</td><td class="right num">${moeda(i.unit)}</td><td class="right num">${moeda(i.total)}</td></tr>`).join("") +
+            `<tr class="subtotal"><td></td><td>Subtotal ${esc(emp)}</td><td class="right num">${inteiro(lst.reduce((s2, i) => s2 + i.qtd, 0))}</td><td></td><td class="right num">${moeda(lst.reduce((s2, i) => s2 + i.total, 0))}</td></tr>`;
+        }).join(""),
+        `<tfoot><tr><td colspan="2">Total recebido das empresas</td><td class="right num">${inteiro(soma(entradas, "quantidade"))}</td><td></td><td class="right num">${moeda(receita)}</td></tr></tfoot>`)
+        : `<p class="muted small">Nenhuma entrada neste mês.</p>`}
+
+      <h3 style="margin-top:1.2rem">2. Serviço repassado às mãos de obra (finalizado)</h3>
+      ${entregas.length ? tabela(`<th>Mão de obra</th><th>Produto · serviço</th><th class="right">Peças</th><th class="right">R$/peça</th><th class="right">Valor</th><th>Situação</th>`,
+        Object.entries(porMao).map(([nome, lst]) => {
+          const g = agruparEntregas(lst);
+          return g.map((i, n) => `<tr><td>${n ? "" : `<strong>${esc(nome)}</strong>`}</td><td>${esc(i.produto_nome)} · ${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td>
+              <td>${i.pago >= i.valor ? "Pago" : i.pago ? "Parte paga" : "A pagar"}</td></tr>`).join("") +
+            `<tr class="subtotal"><td></td><td>Subtotal ${esc(nome)}</td><td class="right num">${inteiro(soma(lst, "quantidade"))}</td><td></td><td class="right num">${moeda(soma(lst, "valor"))}</td><td></td></tr>`;
+        }).join(""),
+        `<tfoot><tr><td colspan="2">Total repassado</td><td class="right num">${inteiro(soma(entregas, "quantidade"))}</td><td></td><td class="right num">${moeda(custo)}</td><td></td></tr></tfoot>`)
+        : `<p class="muted small">Nada finalizado pelas mãos de obra neste mês.</p>`}
+
+      <h3 style="margin-top:1.2rem">3. Resumo por produto e serviço</h3>
+      ${Object.keys(porServ).length ? tabela(`<th>Produto · serviço</th><th class="right">Entrou</th><th class="right">Enviado em lotes</th><th class="right">Finalizado</th><th class="right">Recebe</th><th class="right">Paga</th><th class="right">Lucro</th>`,
+        Object.entries(porServ).sort((x, y) => x[0].localeCompare(y[0])).map(([k, x]) => `<tr><td>${esc(k)}</td><td class="right num">${inteiro(x.entrou)}</td><td class="right num">${inteiro(x.enviado)}</td><td class="right num">${inteiro(x.finalizado)}</td>
+          <td class="right num">${moeda(x.receita)}</td><td class="right num">${moeda(x.custo)}</td><td class="right num"><strong>${moeda(x.receita - x.custo)}</strong></td></tr>`).join(""))
+        : `<p class="muted small">Sem movimento neste mês.</p>`}`;
+    area.innerHTML = html;
+  };
+  sel.onchange = carregar;
+  $("#relImprimir").onclick = () => {
+    const w = window.open("", "_blank");
+    w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório ${nomeMes(`${sel.value}-01`)}</title>
+      <link rel="stylesheet" href="${new URL("css/style.css", location.href)}"></head><body style="background:#fff;padding:1.2rem">
+      <h1>${esc(NOME_FABRICA)} — Relatório de ${nomeMes(`${sel.value}-01`)}</h1>${html}
+      <p class="muted small" style="margin-top:1.5rem">Gerado em ${dataHoraBR(new Date())}</p>
+      <script>setTimeout(()=>print(),400)<\/script></body></html>`);
+    w.document.close();
+  };
   carregar();
 }
 

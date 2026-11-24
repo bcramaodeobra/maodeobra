@@ -312,3 +312,15 @@ body.dono main { max-width: 1150px; }
 .check-whats.desab { color: var(--muted); }
 .nota-item { border: 1px solid var(--line); border-radius: 10px; padding: .7rem .85rem; margin-bottom: .55rem; background: #fff; display: flex; justify-content: space-between; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .nota-item.nao-lida { border-color: #f2d978; background: #fffbea; }
+.barra-periodo { display: flex; justify-content: space-between; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .3rem; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; background: #fff; padding: .5rem .9rem; font: inherit; font-weight: 600; cursor: pointer; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.ativo { background: var(--primary); color: var(--amarelo); }
+.nav-periodo { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.nav-periodo strong { min-width: 160px; text-align: center; }
+.cartao-fech .nome { flex-direction: column; }
+.cartao-fech .nome small { font-size: .66rem; font-weight: 600; opacity: .7; letter-spacing: .3px; margin-top: .1rem; }
+.cartao-fech .extra { font-size: .74rem; color: var(--muted); text-align: center; min-height: 1.1em; }
+tr.subtotal td { font-weight: 600; background: #f6f8fb; font-size: .88rem; }
+@media print { #cardPagamentos, .grid-admin { display: none; } }

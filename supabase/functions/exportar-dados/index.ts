@@ -46,14 +46,14 @@ Deno.serve(async (req) => {
 
   try {
     const [maos, produtos, servicos, lotes, entregas, fechamento, resumo, fechamentos, empresas, entradas, notas] = await Promise.all([
-      tudo("perfis", "id, usuario, nome, papel, whatsapp, endereco, pix, ativo, criado_em", "nome"),
+      tudo("perfis", "id, usuario, nome, papel, whatsapp, endereco, pix, frequencia_pagamento, ativo, criado_em", "nome"),
       tudo("produtos"),
       tudo("servicos"),
       tudo("v_lotes"),
       tudo("v_entregas"),
       tudo("v_fechamento", "*", "mes"),
       tudo("v_resumo_mensal", "*", "mes"),
-      tudo("fechamentos", "*", "mes"),
+      tudo("pagamentos", "*", "inicio"),
       tudo("empresas", "*", "nome"),
       tudo("v_entradas"),
       tudo("notas"),
@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
     return json({
       gerado_em: new Date().toISOString(),
       maos_de_obra: maos, produtos, servicos, lotes, entregas,
-      fechamento, resumo_mensal: resumo, fechamentos, empresas, entradas, notas,
+      fechamento, resumo_mensal: resumo, pagamentos: fechamentos, empresas, entradas, notas,
     });
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);

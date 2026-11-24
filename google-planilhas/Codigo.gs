@@ -150,18 +150,17 @@ function atualizarPlanilha_() {
       meus.reduce((s, l) => s + Number(l.valor_aberto), 0),
       r ? Number(r.quantidade) : 0,
       r ? Number(r.valor_total) : 0,
-      r && r.pago_em ? "Pago em " + Utilities.formatDate(new Date(r.pago_em), FUSO, "dd/MM/yyyy") : (r ? "A pagar" : "—"),
+      !r ? "—" : Number(r.valor_pago) >= Number(r.valor_total) ? "Pago" : Number(r.valor_pago) > 0 ? "Parte paga" : "A pagar",
     ];
   }), `Mês: ${mesAtual.slice(5, 7)}/${mesAtual.slice(0, 4)} · Atualizado em ${agora_()}`);
 
   // 2. Fechamento detalhado (mão de obra × produto × serviço, por mês)
-  const pago = {}; d.resumo_mensal.forEach((r) => (pago[r.mao_de_obra_id + r.mes] = r.pago_em));
   escreverAba_(ss, "Fechamentos", [
     ["Mês", "mm/yyyy"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Quantidade"], ["R$ por peça", MOEDA], ["Valor", MOEDA], ["Situação"],
   ], d.fechamento.slice().sort((a, b) => (a.mes < b.mes ? 1 : a.mes > b.mes ? -1 : a.mao_de_obra_nome.localeCompare(b.mao_de_obra_nome)))
     .map((f) => [
       dataSimples_(f.mes), f.mao_de_obra_nome, f.produto_nome, f.servico_nome, Number(f.quantidade),
-      Number(f.valor_unitario), Number(f.valor), pago[f.mao_de_obra_id + f.mes] ? "Pago" : "A pagar",
+      Number(f.valor_unitario), Number(f.valor), Number(f.valor_pago || 0) >= Number(f.valor) ? "Pago" : Number(f.valor_pago || 0) > 0 ? "Parte paga" : "A pagar",
     ]));
 
   // 3. Lotes
@@ -176,11 +175,16 @@ function atualizarPlanilha_() {
 
   // 4. Entregas (parciais e lotes prontos)
   escreverAba_(ss, "Entregas", [
-    ["Data", DATA_HORA], ["Lote"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Peças"], ["Tipo"], ["Valor", MOEDA], ["Mês", "mm/yyyy"],
+    ["Data", DATA_HORA], ["Lote"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Peças"], ["Tipo"], ["Valor", MOEDA], ["Mês", "mm/yyyy"], ["Pago?"],
   ], d.entregas.slice().reverse().map((e) => [
     dataHora_(e.entregue_em), e.lote_id, e.mao_de_obra_nome, e.produto_nome, e.servico_nome, e.quantidade,
-    e.tipo === "pronto" ? "Lote pronto" : "Parcial", Number(e.valor), dataSimples_(e.mes_ref),
+    e.tipo === "pronto" ? "Lote pronto" : "Parcial", Number(e.valor), dataSimples_(e.mes_ref), e.pago ? "Sim" : "Não",
   ]));
+
+  // Pagamentos registrados (semanal, quinzenal ou mensal)
+  const nomeMaoPag = {}; d.maos_de_obra.forEach((m) => (nomeMaoPag[m.id] = m.nome));
+  escreverAba_(ss, "Pagamentos", [["Pago em", DATA_HORA], ["Mão de obra"], ["Tipo"], ["De", DATA], ["Até", DATA], ["Peças"], ["Valor", MOEDA]],
+    (d.pagamentos || []).slice().reverse().map((p) => [dataHora_(p.pago_em), nomeMaoPag[p.mao_de_obra_id] || "", p.tipo, dataSimples_(p.inicio), dataSimples_(p.fim), p.quantidade, Number(p.valor_total)]));
 
   // 5. Minha mão de obra — entradas das empresas
   escreverAba_(ss, "Entradas (empresas)", [
@@ -193,8 +197,8 @@ function atualizarPlanilha_() {
 
   // 6. Notas de pagamento enviadas
   const nomeMaoNota = {}; d.maos_de_obra.forEach((m) => (nomeMaoNota[m.id] = m.nome));
-  escreverAba_(ss, "Notas enviadas", [["Enviada em", DATA_HORA], ["Mão de obra"], ["Mês", "mm/yyyy"], ["Peças"], ["Valor", MOEDA], ["Lida em", DATA_HORA], ["Mensagem"]],
-    (d.notas || []).slice().reverse().map((n) => [dataHora_(n.enviada_em), nomeMaoNota[n.mao_de_obra_id] || "", dataSimples_(n.mes), n.quantidade, Number(n.valor_total), dataHora_(n.lida_em), n.mensagem || ""]));
+  escreverAba_(ss, "Notas enviadas", [["Enviada em", DATA_HORA], ["Mão de obra"], ["De", DATA], ["Até", DATA], ["Peças"], ["Valor", MOEDA], ["Lida em", DATA_HORA], ["Mensagem"]],
+    (d.notas || []).slice().reverse().map((n) => [dataHora_(n.enviada_em), nomeMaoNota[n.mao_de_obra_id] || "", dataSimples_(n.inicio || n.mes), dataSimples_(n.fim), n.quantidade, Number(n.valor_total), dataHora_(n.lida_em), n.mensagem || ""]));
 
   // 7. Cadastros
   if ((d.empresas || []).length) escreverAba_(ss, "Empresas", [["Empresa"], ["WhatsApp"], ["Situação"]],

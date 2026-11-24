@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 3)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 4)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -18,6 +18,14 @@ create table if not exists public.perfis (
   ativo      boolean not null default true,
   criado_em  timestamptz not null default now()
 );
+
+-- Forma de pagamento de cada mão de obra
+alter table public.perfis add column if not exists frequencia_pagamento text not null default 'mensal';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'perfis_frequencia_chk') then
+    alter table public.perfis add constraint perfis_frequencia_chk check (frequencia_pagamento in ('semanal','quinzenal','mensal'));
+  end if;
+end $$;
 
 create or replace function public.eh_dono()
 returns boolean language sql stable security definer set search_path = public as $$
@@ -83,17 +91,23 @@ create table if not exists public.entregas (
 create index if not exists entregas_lote_idx on public.entregas (lote_id);
 
 -- ---------------------------------------------------------------------
--- 5. FECHAMENTOS (mês marcado como pago para cada mão de obra)
+-- 5. PAGAMENTOS (período pago para cada mão de obra: semana, quinzena ou mês)
 -- ---------------------------------------------------------------------
-create table if not exists public.fechamentos (
+create table if not exists public.pagamentos (
   id              bigint generated always as identity primary key,
   mao_de_obra_id  uuid not null references public.perfis(id),
-  mes             date not null check (extract(day from mes) = 1),
+  tipo            text not null default 'mensal' check (tipo in ('semanal','quinzenal','mensal')),
+  inicio          date not null,
+  fim             date not null check (fim >= inicio),
   quantidade      integer not null default 0,
   valor_total     numeric(12,2) not null default 0,
-  pago_em         timestamptz not null default now(),
-  unique (mao_de_obra_id, mes)
+  pago_em         timestamptz not null default now()
 );
+create index if not exists pagamentos_mo_idx on public.pagamentos (mao_de_obra_id, inicio);
+
+-- Cada entrega paga aponta para o pagamento que a quitou
+alter table public.entregas add column if not exists pagamento_id bigint references public.pagamentos(id) on delete set null;
+create index if not exists entregas_pag_idx on public.entregas (pagamento_id);
 
 -- ---------------------------------------------------------------------
 -- 6. CONFIGURAÇÕES do dono (link da planilha de backup etc.)
@@ -135,7 +149,7 @@ create index if not exists entradas_data_idx on public.entradas (data);
 create table if not exists public.notas (
   id              bigint generated always as identity primary key,
   mao_de_obra_id  uuid not null references public.perfis(id),
-  mes             date not null check (extract(day from mes) = 1),
+  mes             date,
   quantidade      integer not null default 0,
   valor_total     numeric(12,2) not null default 0,
   itens           jsonb not null default '[]'::jsonb,
@@ -144,11 +158,45 @@ create table if not exists public.notas (
   lida_em         timestamptz
 );
 create index if not exists notas_mo_idx on public.notas (mao_de_obra_id, enviada_em desc);
+alter table public.notas add column if not exists inicio date;
+alter table public.notas add column if not exists fim date;
+alter table public.notas add column if not exists tipo text;
+alter table public.notas alter column mes drop not null;
+do $$ begin
+  alter table public.notas drop constraint if exists notas_mes_check;
+end $$;
+update public.notas set inicio = mes, fim = (mes + interval '1 month - 1 day')::date, tipo = 'mensal'
+ where inicio is null and mes is not null;
+
+-- ---------------------------------------------------------------------
+-- 6d. MIGRAÇÃO da versão 3: "fechamentos" (por mês) viram "pagamentos"
+-- ---------------------------------------------------------------------
+do $$
+declare f record; v_id bigint;
+begin
+  if to_regclass('public.fechamentos') is not null then
+    alter table public.entregas disable trigger user;
+    for f in select * from public.fechamentos loop
+      insert into public.pagamentos (mao_de_obra_id, tipo, inicio, fim, quantidade, valor_total, pago_em)
+      values (f.mao_de_obra_id, 'mensal', f.mes, (f.mes + interval '1 month - 1 day')::date, f.quantidade, f.valor_total, f.pago_em)
+      returning id into v_id;
+      update public.entregas e set pagamento_id = v_id
+        from public.lotes l
+       where l.id = e.lote_id and l.mao_de_obra_id = f.mao_de_obra_id and e.pagamento_id is null
+         and date_trunc('month', e.entregue_em at time zone 'America/Sao_Paulo')::date = f.mes;
+    end loop;
+    alter table public.entregas enable trigger user;
+    drop table public.fechamentos cascade;
+  end if;
+end $$;
 
 -- =====================================================================
--- 7. VISÕES (cálculos prontos)
+-- 7. VISÕES (cálculos prontos) — recriadas a cada atualização
 -- =====================================================================
-create or replace view public.v_lotes with (security_invoker = true) as
+drop view if exists public.v_resumo_mensal, public.v_fechamento, public.v_entregas, public.v_lotes,
+  public.v_entradas, public.v_distribuicao cascade;
+
+create view public.v_lotes with (security_invoker = true) as
 select
   l.*,
   p.nome  as produto_nome,
@@ -166,7 +214,7 @@ join public.servicos s on s.id = l.servico_id
 join public.perfis  pf on pf.id = l.mao_de_obra_id
 left join lateral (select sum(quantidade) as entregue from public.entregas where lote_id = l.id) e on true;
 
-create or replace view public.v_entregas with (security_invoker = true) as
+create view public.v_entregas with (security_invoker = true) as
 select
   e.*,
   l.mao_de_obra_id,
@@ -174,7 +222,9 @@ select
   l.servico_id,
   l.valor_unitario,
   e.quantidade * l.valor_unitario as valor,
+  (e.entregue_em at time zone 'America/Sao_Paulo')::date as dia,
   date_trunc('month', e.entregue_em at time zone 'America/Sao_Paulo')::date as mes_ref,
+  (e.pagamento_id is not null) as pago,
   p.nome  as produto_nome,
   s.nome  as servico_nome,
   pf.nome as mao_de_obra_nome
@@ -185,30 +235,29 @@ join public.servicos s on s.id = l.servico_id
 join public.perfis pf  on pf.id = l.mao_de_obra_id
 where l.status <> 'cancelado';
 
--- Fechamento detalhado: mão de obra × mês × produto × serviço
-create or replace view public.v_fechamento with (security_invoker = true) as
+-- Fechamento detalhado por mês: mão de obra × produto × serviço
+create view public.v_fechamento with (security_invoker = true) as
 select
   mao_de_obra_id, mao_de_obra_nome, mes_ref as mes,
   produto_nome, servico_nome, valor_unitario,
   sum(quantidade) as quantidade,
-  sum(valor)      as valor
+  sum(valor)      as valor,
+  sum(valor) filter (where pago) as valor_pago
 from public.v_entregas
 group by mao_de_obra_id, mao_de_obra_nome, mes_ref, produto_nome, servico_nome, valor_unitario;
 
--- Total do mês por mão de obra, com situação de pagamento
-create or replace view public.v_resumo_mensal with (security_invoker = true) as
+-- Total do mês por mão de obra
+create view public.v_resumo_mensal with (security_invoker = true) as
 select
-  ve.mao_de_obra_id, ve.mao_de_obra_nome, ve.mes_ref as mes,
-  sum(ve.quantidade) as quantidade,
-  sum(ve.valor)      as valor_total,
-  f.id as fechamento_id, f.pago_em
-from public.v_entregas ve
-left join public.fechamentos f on f.mao_de_obra_id = ve.mao_de_obra_id and f.mes = ve.mes_ref
-group by ve.mao_de_obra_id, ve.mao_de_obra_nome, ve.mes_ref, f.id, f.pago_em;
-
+  mao_de_obra_id, mao_de_obra_nome, mes_ref as mes,
+  sum(quantidade) as quantidade,
+  sum(valor)      as valor_total,
+  coalesce(sum(valor) filter (where pago), 0) as valor_pago
+from public.v_entregas
+group by mao_de_obra_id, mao_de_obra_nome, mes_ref;
 
 -- Entradas com nomes
-create or replace view public.v_entradas with (security_invoker = true) as
+create view public.v_entradas with (security_invoker = true) as
 select en.*, em.nome as empresa_nome, p.nome as produto_nome, s.nome as servico_nome,
        s.valor_unitario as valor_mao_de_obra,
        date_trunc('month', en.data)::date as mes_ref
@@ -217,8 +266,8 @@ join public.empresas em on em.id = en.empresa_id
 join public.produtos p  on p.id = en.produto_id
 join public.servicos s  on s.id = en.servico_id;
 
--- Quanto entrou x quanto já foi distribuído, por produto + serviço (total geral)
-create or replace view public.v_distribuicao with (security_invoker = true) as
+-- Quanto entrou x quanto já foi distribuído, por produto + serviço
+create view public.v_distribuicao with (security_invoker = true) as
 with ent as (select servico_id, sum(quantidade) q from public.entradas group by servico_id),
      dis as (select servico_id, sum(quantidade) q from public.lotes where status <> 'cancelado' group by servico_id)
 select s.id as servico_id, p.nome as produto_nome, s.nome as servico_nome,
@@ -234,22 +283,22 @@ where coalesce(ent.q, 0) > 0 or coalesce(dis.q, 0) > 0;
 -- =====================================================================
 -- 8. REGRAS (gatilhos)
 -- =====================================================================
--- Mês já pago fica travado
+-- Entrega já paga fica travada (desfaça o pagamento antes de alterar)
 create or replace function public.trava_mes_pago()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare v_mo uuid; v_quando timestamptz; v_mes date;
 begin
-  v_quando := case when tg_op = 'INSERT' then new.entregue_em else old.entregue_em end;
-  select mao_de_obra_id into v_mo from lotes where id = coalesce(new.lote_id, old.lote_id);
-  v_mes := date_trunc('month', v_quando at time zone 'America/Sao_Paulo')::date;
-  if exists (select 1 from fechamentos where mao_de_obra_id = v_mo and mes = v_mes) then
-    raise exception 'Este mês já foi fechado e pago para esta mão de obra. Reabra o fechamento para alterar.';
+  if tg_op = 'DELETE' and old.pagamento_id is not null then
+    raise exception 'Esta entrega já foi paga. Desfaça o pagamento antes de alterar.';
+  end if;
+  if tg_op = 'UPDATE' and old.pagamento_id is not null and new.pagamento_id is not distinct from old.pagamento_id
+     and (new.quantidade <> old.quantidade or new.lote_id <> old.lote_id) then
+    raise exception 'Esta entrega já foi paga. Desfaça o pagamento antes de alterar.';
   end if;
   return coalesce(new, old);
 end $$;
 
 drop trigger if exists trg_trava_mes_pago on public.entregas;
-create trigger trg_trava_mes_pago before insert or update or delete on public.entregas
+create trigger trg_trava_mes_pago before update or delete on public.entregas
 for each row execute function public.trava_mes_pago();
 
 -- Lote fica "pronto" quando tudo foi entregue (e volta a "aberto" se uma entrega for desfeita)
@@ -271,10 +320,9 @@ begin
 end $$;
 
 drop trigger if exists trg_status_lote on public.entregas;
-create trigger trg_status_lote after insert or update or delete on public.entregas
+create trigger trg_status_lote after insert or update of quantidade, lote_id or delete on public.entregas
 for each row execute function public.atualiza_status_lote();
 
--- =====================================================================
 -- 9. AÇÕES (chamadas pelo site — só o dono)
 -- =====================================================================
 create or replace function public.enviar_lote(
@@ -352,41 +400,57 @@ begin
   if not found then raise exception 'Lote não encontrado ou já finalizado.'; end if;
 end $$;
 
-create or replace function public.fechar_mes(p_mao_de_obra uuid, p_mes date)
+drop function if exists public.fechar_mes(uuid, date), public.reabrir_mes(bigint),
+  public.enviar_nota(uuid, date, text);
+
+-- Marca como pago tudo o que a mão de obra finalizou no período e ainda não foi pago
+create or replace function public.pagar_periodo(p_mao_de_obra uuid, p_inicio date, p_fim date, p_tipo text default 'mensal')
 returns bigint language plpgsql security definer set search_path = public as $$
-declare v_mes date := date_trunc('month', p_mes)::date; v_qtd int; v_valor numeric; v_id bigint;
+declare v_id bigint; v_qtd int; v_valor numeric;
 begin
-  if not eh_dono() then raise exception 'Apenas o dono pode fechar o mês.'; end if;
-  select coalesce(sum(quantidade),0), coalesce(sum(valor_total),0) into v_qtd, v_valor
-    from v_resumo_mensal where mao_de_obra_id = p_mao_de_obra and mes = v_mes;
-  insert into fechamentos (mao_de_obra_id, mes, quantidade, valor_total)
-  values (p_mao_de_obra, v_mes, v_qtd, v_valor) returning id into v_id;
+  if not eh_dono() then raise exception 'Apenas o dono pode registrar pagamentos.'; end if;
+  select coalesce(sum(quantidade), 0), coalesce(sum(valor), 0) into v_qtd, v_valor
+    from v_entregas where mao_de_obra_id = p_mao_de_obra and not pago and dia between p_inicio and p_fim;
+  if v_qtd = 0 then raise exception 'Não há nada a pagar neste período.'; end if;
+  insert into pagamentos (mao_de_obra_id, tipo, inicio, fim, quantidade, valor_total)
+  values (p_mao_de_obra, coalesce(p_tipo, 'mensal'), p_inicio, p_fim, v_qtd, v_valor) returning id into v_id;
+  update entregas e set pagamento_id = v_id
+    from lotes l
+   where l.id = e.lote_id and l.mao_de_obra_id = p_mao_de_obra and l.status <> 'cancelado'
+     and e.pagamento_id is null
+     and (e.entregue_em at time zone 'America/Sao_Paulo')::date between p_inicio and p_fim;
   return v_id;
 end $$;
 
-create or replace function public.reabrir_mes(p_fechamento bigint)
+-- Desfaz um pagamento (as entregas voltam para "a pagar")
+create or replace function public.desfazer_pagamento(p_pagamento bigint)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not eh_dono() then raise exception 'Apenas o dono.'; end if;
-  delete from fechamentos where id = p_fechamento;
+  update entregas set pagamento_id = null where pagamento_id = p_pagamento;
+  delete from pagamentos where id = p_pagamento;
 end $$;
 
-
--- Nota de pagamento do mês (aviso para a mão de obra; não marca como pago)
-create or replace function public.enviar_nota(p_mao_de_obra uuid, p_mes date, p_mensagem text default null)
+-- Nota de pagamento do período (aviso para a mão de obra; não marca como pago)
+create or replace function public.enviar_nota(p_mao_de_obra uuid, p_inicio date, p_fim date,
+  p_tipo text default 'mensal', p_mensagem text default null)
 returns bigint language plpgsql security definer set search_path = public as $$
-declare v_mes date := date_trunc('month', p_mes)::date; v_itens jsonb; v_qtd int; v_valor numeric; v_id bigint;
+declare v_itens jsonb; v_qtd int; v_valor numeric; v_id bigint;
 begin
   if not eh_dono() then raise exception 'Apenas o dono pode enviar notas.'; end if;
+  with g as (
+    select produto_nome, servico_nome, valor_unitario, sum(quantidade) quantidade, sum(valor) valor
+      from v_entregas where mao_de_obra_id = p_mao_de_obra and dia between p_inicio and p_fim
+     group by produto_nome, servico_nome, valor_unitario)
   select coalesce(jsonb_agg(jsonb_build_object('produto', produto_nome, 'servico', servico_nome,
            'quantidade', quantidade, 'valor_unitario', valor_unitario, 'valor', valor)
            order by produto_nome, servico_nome), '[]'::jsonb),
          coalesce(sum(quantidade), 0), coalesce(sum(valor), 0)
-    into v_itens, v_qtd, v_valor
-    from v_fechamento where mao_de_obra_id = p_mao_de_obra and mes = v_mes;
-  if v_qtd = 0 then raise exception 'Esta mão de obra não tem nada finalizado neste mês.'; end if;
-  insert into notas (mao_de_obra_id, mes, quantidade, valor_total, itens, mensagem)
-  values (p_mao_de_obra, v_mes, v_qtd, v_valor, v_itens, nullif(trim(p_mensagem), ''))
+    into v_itens, v_qtd, v_valor from g;
+  if v_qtd = 0 then raise exception 'Esta mão de obra não tem nada finalizado neste período.'; end if;
+  insert into notas (mao_de_obra_id, mes, inicio, fim, tipo, quantidade, valor_total, itens, mensagem)
+  values (p_mao_de_obra, date_trunc('month', p_inicio)::date, p_inicio, p_fim, coalesce(p_tipo, 'mensal'),
+          v_qtd, v_valor, v_itens, nullif(trim(p_mensagem), ''))
   returning id into v_id;
   return v_id;
 end $$;
@@ -406,7 +470,7 @@ alter table public.produtos      enable row level security;
 alter table public.servicos      enable row level security;
 alter table public.lotes         enable row level security;
 alter table public.entregas      enable row level security;
-alter table public.fechamentos   enable row level security;
+alter table public.pagamentos    enable row level security;
 alter table public.configuracoes enable row level security;
 
 drop policy if exists perfis_dono on public.perfis;
@@ -434,10 +498,10 @@ drop policy if exists ent_mo on public.entregas;
 create policy ent_mo on public.entregas for select to authenticated
   using (exists (select 1 from public.lotes l where l.id = lote_id and l.mao_de_obra_id = auth.uid()));
 
-drop policy if exists fech_dono on public.fechamentos;
-create policy fech_dono on public.fechamentos for all to authenticated using (eh_dono()) with check (eh_dono());
-drop policy if exists fech_mo on public.fechamentos;
-create policy fech_mo on public.fechamentos for select to authenticated using (mao_de_obra_id = auth.uid());
+drop policy if exists pag_dono on public.pagamentos;
+create policy pag_dono on public.pagamentos for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists pag_mo on public.pagamentos;
+create policy pag_mo on public.pagamentos for select to authenticated using (mao_de_obra_id = auth.uid());
 
 drop policy if exists conf_dono on public.configuracoes;
 create policy conf_dono on public.configuracoes for all to authenticated using (eh_dono()) with check (eh_dono());
