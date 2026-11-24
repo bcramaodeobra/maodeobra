@@ -103,8 +103,8 @@ export function nomeMes(iso) {
 }
 
 export const STATUS = {
-  enviado: "Enviado", recebido: "Recebido", em_producao: "Em produção",
-  concluido: "Concluído", cancelado: "Cancelado", pendente: "A conferir", conferida: "Conferida",
+  aberto: "Em aberto", pronto: "Pronto", cancelado: "Cancelado",
+  parcial: "Parcial", pago: "Pago",
 };
 export const selo = (status, texto) => `<span class="selo ${status}">${esc(texto ?? STATUS[status] ?? status)}</span>`;
 
@@ -124,10 +124,10 @@ export function aviso(msg, erro = false) {
 }
 
 // Modal simples. conteudo = HTML. onSubmit recebe (FormData, form) e pode lançar erro.
-export function abrirModal({ titulo, conteudo, onSubmit, aoAbrir }) {
+export function abrirModal({ titulo, conteudo, onSubmit, aoAbrir, largo = false }) {
   const fundo = document.createElement("div");
   fundo.className = "modal-fundo";
-  fundo.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+  fundo.innerHTML = `<div class="modal${largo ? " largo" : ""}" role="dialog" aria-modal="true">
       <div class="modal-topo"><h2>${esc(titulo)}</h2><button class="icon-btn" data-fechar aria-label="Fechar" style="color:var(--muted)">✕</button></div>
       <form novalidate>${conteudo}</form></div>`;
   const fechar = () => fundo.remove();
@@ -144,7 +144,7 @@ export function abrirModal({ titulo, conteudo, onSubmit, aoAbrir }) {
   });
   document.body.appendChild(fundo);
   aoAbrir?.(form, fechar);
-  $("input:not([type=hidden]), select, textarea", form)?.focus();
+  if (!largo) $("input:not([type=hidden]), select, textarea", form)?.focus();
   return { fechar, form };
 }
 

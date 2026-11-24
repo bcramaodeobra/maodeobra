@@ -1,5 +1,5 @@
 /**
- * BACKUP DIÁRIO NO GOOGLE PLANILHAS — Controle de Mão de Obra (Bordados)
+ * BACKUP DIÁRIO NO GOOGLE PLANILHAS — Controle de Mão de Obra (Bordados) — versão 2
  *
  * Cole este código em: Planilha > Extensões > Apps Script
  * Depois preencha os 2 campos abaixo (URL_FUNCAO e CODIGO_SECRETO).
@@ -8,7 +8,7 @@ const CONFIG = {
   // 1) Troque SEU-PROJETO pelo código do seu projeto Supabase (o mesmo do Project URL)
   URL_FUNCAO: "https://SEU-PROJETO.supabase.co/functions/v1/exportar-dados",
 
-  // 2) Cole aqui o mesmo código secreto que você colocou no Supabase (CODIGO_BACKUP)
+  // 2) Cole aqui o mesmo código secreto que está no Supabase (CODIGO_BACKUP)
   CODIGO_SECRETO: "COLE-AQUI-O-CODIGO-SECRETO",
 
   // Opções (pode deixar como está)
@@ -26,6 +26,7 @@ const DATA_HORA = "dd/mm/yyyy hh:mm";
 // Menu na planilha
 // ------------------------------------------------------------------
 function onOpen() {
+  guardarIdPlanilha_();
   SpreadsheetApp.getUi()
     .createMenu("🧵 Backup")
     .addItem("Atualizar dados agora", "atualizarAgora")
@@ -38,13 +39,13 @@ function onOpen() {
 
 function atualizarAgora() {
   const total = atualizarPlanilha_();
-  SpreadsheetApp.getActive().toast(`Dados atualizados (${total} lotes).`, "Backup", 5);
+  aviso_(`Dados atualizados (${total} lotes).`);
 }
 
 function backupAgora() {
   atualizarPlanilha_();
   const copia = salvarCopia_();
-  SpreadsheetApp.getActive().toast(`Cópia salva: ${copia.getName()}`, "Backup", 6);
+  aviso_(`Cópia salva: ${copia.getName()}`);
 }
 
 // Executado todos os dias pelo gatilho automático
@@ -65,11 +66,12 @@ function backupDiario() {
 }
 
 function ativarBackupDiario() {
+  guardarIdPlanilha_();
   desativarBackupDiario(true);
   ScriptApp.newTrigger("backupDiario")
     .timeBased().everyDays(1).atHour(CONFIG.HORA_BACKUP).inTimezone(FUSO)
     .create();
-  backupAgora(); // já faz o primeiro para testar
+  backupAgora();
   SpreadsheetApp.getUi().alert(
     `Backup diário ativado!\n\nTodo dia, por volta das ${CONFIG.HORA_BACKUP}h, a planilha será atualizada e uma cópia ` +
     `será salva na pasta "${CONFIG.PASTA_BACKUP}" do seu Google Drive.\n\nSe der erro, você recebe um e-mail.`
@@ -81,6 +83,26 @@ function desativarBackupDiario(silencioso) {
     .filter((t) => t.getHandlerFunction() === "backupDiario")
     .forEach((t) => ScriptApp.deleteTrigger(t));
   if (silencioso !== true) SpreadsheetApp.getUi().alert("Backup diário desativado.");
+}
+
+// ------------------------------------------------------------------
+// Botão "Fazer backup agora" do painel do dono (App da Web)
+// ------------------------------------------------------------------
+function doGet(e) {
+  const pagina = (titulo, texto, ok) => HtmlService.createHtmlOutput(
+    `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:15vh auto;text-align:center">
+       <div style="font-size:48px">${ok ? "✅" : "⚠️"}</div><h2>${titulo}</h2><p style="color:#555">${texto}</p>
+       <p style="color:#999;font-size:13px">Pode fechar esta aba.</p></div>`).setTitle(titulo);
+  if (!e || !e.parameter || e.parameter.codigo !== CONFIG.CODIGO_SECRETO) {
+    return pagina("Acesso negado", "Código inválido.", false);
+  }
+  try {
+    const total = atualizarPlanilha_();
+    const copia = salvarCopia_();
+    return pagina("Backup feito!", `${total} lotes salvos. Cópia: ${copia.getName()}`, true);
+  } catch (err) {
+    return pagina("O backup falhou", err.message, false);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -108,99 +130,72 @@ function buscarDados_() {
 // ------------------------------------------------------------------
 function atualizarPlanilha_() {
   const d = buscarDados_();
-  const ss = SpreadsheetApp.getActive();
+  const ss = planilha_();
   const mesAtual = Utilities.formatDate(new Date(), FUSO, "yyyy-MM") + "-01";
   const maos = d.maos_de_obra.filter((m) => m.papel === "mao_de_obra");
-  const nomeMao = {}; maos.forEach((m) => (nomeMao[m.id] = m.nome));
-  const STATUS = { enviado: "Enviado", recebido: "Recebido", em_producao: "Em produção", concluido: "Concluído",
-    cancelado: "Cancelado", pendente: "A conferir", conferida: "Conferida" };
+  const STATUS = { aberto: "Em aberto", pronto: "Pronto", cancelado: "Cancelado" };
 
-  // 1. Resumo do mês atual
+  // 1. Resumo do mês atual por mão de obra
   const resumoMes = d.resumo_mensal.filter((r) => r.mes === mesAtual);
-  const abertos = d.lotes.filter((l) => l.status !== "concluido" && l.status !== "cancelado");
-  const pendentes = d.entregas.filter((e) => e.status === "pendente");
-  const linhasResumo = maos.map((m) => {
+  const abertos = d.lotes.filter((l) => l.status === "aberto");
+  escreverAba_(ss, "Resumo do mês", [
+    ["Mão de obra"], ["Lotes em aberto"], ["Peças com ela"], ["Valor em aberto", MOEDA],
+    ["Peças finalizadas no mês"], ["Finalizado no mês", MOEDA], ["Situação do mês"],
+  ], maos.map((m) => {
     const r = resumoMes.find((x) => x.mao_de_obra_id === m.id);
-    const meusAbertos = abertos.filter((l) => l.mao_de_obra_id === m.id);
+    const meus = abertos.filter((l) => l.mao_de_obra_id === m.id);
     return [
-      m.nome,
-      meusAbertos.length,
-      meusAbertos.reduce((s, l) => s + l.qtd_saldo + l.qtd_em_conferencia, 0),
-      pendentes.filter((e) => e.mao_de_obra_id === m.id).reduce((s, e) => s + e.quantidade, 0),
+      m.nome, meus.length,
+      meus.reduce((s, l) => s + l.qtd_falta, 0),
+      meus.reduce((s, l) => s + Number(l.valor_aberto), 0),
       r ? Number(r.quantidade) : 0,
       r ? Number(r.valor_total) : 0,
-      r && r.pago_em ? "Pago em " + Utilities.formatDate(new Date(r.pago_em), FUSO, "dd/MM/yyyy") : (r ? "Em aberto" : "—"),
+      r && r.pago_em ? "Pago em " + Utilities.formatDate(new Date(r.pago_em), FUSO, "dd/MM/yyyy") : (r ? "A pagar" : "—"),
     ];
-  });
-  escreverAba_(ss, "Resumo do mês", [
-    ["Mão de obra"], ["Lotes em aberto"], ["Peças com ela"], ["Peças a conferir"],
-    ["Peças aprovadas no mês"], ["Valor a pagar no mês", MOEDA], ["Situação"],
-  ], linhasResumo, `Mês: ${mesAtual.slice(5, 7)}/${mesAtual.slice(0, 4)} · Atualizado em ${agora_()}`);
+  }), `Mês: ${mesAtual.slice(5, 7)}/${mesAtual.slice(0, 4)} · Atualizado em ${agora_()}`);
 
-  // 2. A pagar por mês (histórico)
-  escreverAba_(ss, "A pagar por mês",
-    [["Mês", "mm/yyyy"], ["Mão de obra"], ["Entregas"], ["Peças aprovadas"], ["Valor", MOEDA], ["Situação"], ["Pago em", DATA_HORA]],
-    d.resumo_mensal.slice().sort((a, b) => (a.mes < b.mes ? 1 : -1)).map((r) => [
-      dataSimples_(r.mes), r.mao_de_obra_nome, Number(r.entregas), Number(r.quantidade), Number(r.valor_total),
-      r.pago_em ? "Pago" : "Em aberto", dataHora_(r.pago_em),
+  // 2. Fechamento detalhado (mão de obra × produto × serviço, por mês)
+  const pago = {}; d.resumo_mensal.forEach((r) => (pago[r.mao_de_obra_id + r.mes] = r.pago_em));
+  escreverAba_(ss, "Fechamentos", [
+    ["Mês", "mm/yyyy"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Quantidade"], ["R$ por peça", MOEDA], ["Valor", MOEDA], ["Situação"],
+  ], d.fechamento.slice().sort((a, b) => (a.mes < b.mes ? 1 : a.mes > b.mes ? -1 : a.mao_de_obra_nome.localeCompare(b.mao_de_obra_nome)))
+    .map((f) => [
+      dataSimples_(f.mes), f.mao_de_obra_nome, f.produto_nome, f.servico_nome, Number(f.quantidade),
+      Number(f.valor_unitario), Number(f.valor), pago[f.mao_de_obra_id + f.mes] ? "Pago" : "A pagar",
     ]));
 
   // 3. Lotes
   escreverAba_(ss, "Lotes", [
     ["Nº"], ["Enviado em", DATA_HORA], ["Mão de obra"], ["Produto"], ["Serviço"], ["Quantidade"], ["R$ por peça", MOEDA],
-    ["Total do lote", MOEDA], ["Prazo", DATA], ["Situação"], ["Aprovadas"], ["A conferir"], ["Faltam"], ["Voltaram p/ refazer"],
-    ["Valor aprovado", MOEDA], ["Recebido em", DATA_HORA], ["Concluído em", DATA_HORA], ["Observações"],
+    ["Total do lote", MOEDA], ["Entregue"], ["Falta"], ["Situação"], ["Finalizado em", DATA_HORA], ["Observações"],
   ], d.lotes.slice().reverse().map((l) => [
-    l.id, dataHora_(l.enviado_em), l.mao_de_obra_nome, l.produto_nome, l.servico_nome, l.quantidade, Number(l.valor_unitario),
-    Number(l.valor_total), dataSimples_(l.prazo), l.atrasado ? "Atrasado" : STATUS[l.status] || l.status, l.qtd_aprovada,
-    l.qtd_em_conferencia, l.qtd_saldo, l.qtd_retorno, Number(l.valor_aprovado), dataHora_(l.recebido_em),
-    dataHora_(l.concluido_em), l.observacoes || "",
+    l.id, dataHora_(l.enviado_em), l.mao_de_obra_nome, l.produto_nome, l.servico_nome, l.quantidade,
+    Number(l.valor_unitario), Number(l.valor_total), l.qtd_entregue, l.qtd_falta, STATUS[l.status] || l.status,
+    dataHora_(l.finalizado_em), l.observacoes || "",
   ]));
 
-  // 4. Entregas e conferências
+  // 4. Entregas (parciais e lotes prontos)
   escreverAba_(ss, "Entregas", [
-    ["Nº"], ["Lote"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Entregue em", DATA_HORA], ["Peças entregues"], ["Situação"],
-    ["Aprovadas"], ["Voltaram p/ refazer"], ["Conferido em", DATA_HORA], ["R$ por peça", MOEDA], ["Valor", MOEDA],
-    ["Mês do pagamento", "mm/yyyy"], ["Obs. mão de obra"], ["Obs. conferência"],
+    ["Data", DATA_HORA], ["Lote"], ["Mão de obra"], ["Produto"], ["Serviço"], ["Peças"], ["Tipo"], ["Valor", MOEDA], ["Mês", "mm/yyyy"],
   ], d.entregas.slice().reverse().map((e) => [
-    e.id, e.lote_id, e.mao_de_obra_nome, e.produto_nome, e.servico_nome, dataHora_(e.entregue_em), e.quantidade,
-    STATUS[e.status] || e.status, e.quantidade_aprovada == null ? "" : e.quantidade_aprovada,
-    e.status === "conferida" ? e.quantidade_retorno : "", dataHora_(e.conferido_em), Number(e.valor_unitario),
-    Number(e.valor), dataSimples_(e.mes_ref), e.observacao || "", e.observacao_conferencia || "",
+    dataHora_(e.entregue_em), e.lote_id, e.mao_de_obra_nome, e.produto_nome, e.servico_nome, e.quantidade,
+    e.tipo === "pronto" ? "Lote pronto" : "Parcial", Number(e.valor), dataSimples_(e.mes_ref),
   ]));
 
-  // 5. Produção diária lançada pelas mãos de obra
-  escreverAba_(ss, "Produção diária", [
-    ["Dia", DATA], ["Mão de obra"], ["Lote"], ["Produto"], ["Serviço"], ["Peças"], ["Valor estimado", MOEDA], ["Observação"],
-  ], d.producao.slice().reverse().map((p) => [
-    dataSimples_(p.data), nomeMao[p.mao_de_obra_id] || "", p.lote_id, p.produto_nome, p.servico_nome, p.quantidade,
-    Number(p.valor_estimado), p.observacao || "",
-  ]));
-
-  // 6. Materiais enviados
-  const loteMao = {}; d.lotes.forEach((l) => (loteMao[l.id] = l.mao_de_obra_nome));
-  escreverAba_(ss, "Materiais enviados", [["Lote"], ["Mão de obra"], ["Material"], ["Unidade"], ["Enviado"], ["Voltou"]],
-    d.lote_materiais.slice().reverse().map((m) => [
-      m.lote_id, loteMao[m.lote_id] || "", m.materiais ? m.materiais.nome : "", m.materiais ? m.materiais.unidade : "",
-      Number(m.quantidade), Number(m.devolvido),
-    ]));
-
-  // 7. Cadastros
-  escreverAba_(ss, "Mãos de obra", [["Nome"], ["Usuário"], ["Telefone"], ["Endereço"], ["Situação"], ["Cadastrado em", DATA_HORA], ["Observações"]],
-    maos.map((m) => [m.nome, m.usuario, m.telefone || "", m.endereco || "", m.ativo ? "Ativo" : "Inativo", dataHora_(m.criado_em), m.observacoes || ""]));
+  // 5. Cadastros
+  escreverAba_(ss, "Mãos de obra", [["Nome"], ["Usuário"], ["WhatsApp"], ["Endereço"], ["Chave PIX"], ["Situação"], ["Cadastrado em", DATA_HORA]],
+    maos.map((m) => [m.nome, m.usuario, m.whatsapp || "", m.endereco || "", m.pix || "", m.ativo ? "Ativo" : "Inativo", dataHora_(m.criado_em)]));
 
   const nomeProd = {}; d.produtos.forEach((p) => (nomeProd[p.id] = p.nome));
-  const nomeServ = {}; d.servicos.forEach((s) => (nomeServ[s.id] = s.nome));
-  escreverAba_(ss, "Tabela de preços", [["Produto"], ["Serviço"], ["R$ por peça", MOEDA], ["Atualizado em", DATA_HORA]],
-    d.precos.map((p) => [nomeProd[p.produto_id] || "", nomeServ[p.servico_id] || "", Number(p.valor_unitario), dataHora_(p.atualizado_em)])
+  escreverAba_(ss, "Serviços e preços", [["Produto"], ["Serviço"], ["R$ por peça", MOEDA], ["Situação"]],
+    d.servicos.map((s) => [nomeProd[s.produto_id] || "", s.nome, Number(s.valor_unitario), s.ativo ? "Ativo" : "Inativo"])
       .sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])));
 
-  // Remove a aba vazia padrão, se existir
-  ["Página1", "Sheet1", "Planilha1"].forEach((n) => {
+  // Remove abas antigas/vazias
+  ["Página1", "Sheet1", "Planilha1", "A pagar por mês", "Produção diária", "Materiais enviados", "Tabela de preços"].forEach((n) => {
     const s = ss.getSheetByName(n);
-    if (s && ss.getSheets().length > 1 && s.getLastRow() === 0) ss.deleteSheet(s);
+    if (s && ss.getSheets().length > 1) ss.deleteSheet(s);
   });
-  ss.setActiveSheet(ss.getSheetByName("Resumo do mês"));
   return d.lotes.length;
 }
 
@@ -212,8 +207,8 @@ function escreverAba_(ss, nome, colunas, linhas, subtitulo) {
   const inicio = subtitulo ? 3 : 1;
   if (subtitulo) aba.getRange(1, 1).setValue(subtitulo).setFontStyle("italic").setFontColor("#6b7180");
 
-  const cab = aba.getRange(inicio, 1, 1, colunas.length);
-  cab.setValues([colunas.map((c) => c[0])]).setFontWeight("bold").setBackground("#23324d").setFontColor("#ffffff");
+  aba.getRange(inicio, 1, 1, colunas.length).setValues([colunas.map((c) => c[0])])
+    .setFontWeight("bold").setBackground("#23324d").setFontColor("#ffffff");
   aba.setFrozenRows(inicio);
 
   if (linhas.length) {
@@ -236,7 +231,7 @@ function pastaBackup_() {
 }
 
 function salvarCopia_() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = planilha_();
   SpreadsheetApp.flush();
   const nome = `Backup bordados ${Utilities.formatDate(new Date(), FUSO, "yyyy-MM-dd HH'h'mm")}`;
   return DriveApp.getFileById(ss.getId()).makeCopy(nome, pastaBackup_());
@@ -253,8 +248,26 @@ function limparCopiasAntigas_() {
 }
 
 // ------------------------------------------------------------------
-// Datas
+// Utilidades
 // ------------------------------------------------------------------
+function guardarIdPlanilha_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss) PropertiesService.getScriptProperties().setProperty("ID_PLANILHA", ss.getId());
+}
+
+// Funciona no menu, no gatilho diário e no App da Web
+function planilha_() {
+  const ativa = SpreadsheetApp.getActiveSpreadsheet();
+  if (ativa) return ativa;
+  const id = PropertiesService.getScriptProperties().getProperty("ID_PLANILHA");
+  if (!id) throw new Error("Abra a planilha uma vez e use o menu Backup para registrá-la.");
+  return SpreadsheetApp.openById(id);
+}
+
+function aviso_(texto) {
+  try { SpreadsheetApp.getActiveSpreadsheet().toast(texto, "Backup", 6); } catch (e) { /* sem tela */ }
+}
+
 function agora_() { return Utilities.formatDate(new Date(), FUSO, "dd/MM/yyyy HH:mm"); }
 function dataHora_(v) { return v ? new Date(v) : ""; }
 function dataSimples_(v) {

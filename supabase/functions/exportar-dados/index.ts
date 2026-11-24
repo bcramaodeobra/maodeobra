@@ -45,26 +45,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const [maos, produtos, servicos, precos, materiais, lotes, loteMateriais, entregas, producao, resumo, fechamentos] =
-      await Promise.all([
-        tudo("perfis", "id, usuario, nome, papel, telefone, endereco, observacoes, ativo, criado_em", "nome"),
-        tudo("produtos"),
-        tudo("servicos"),
-        tudo("precos"),
-        tudo("materiais"),
-        tudo("v_lotes"),
-        tudo("lote_materiais", "*, materiais(nome, unidade)"),
-        tudo("v_entregas"),
-        tudo("v_producao"),
-        tudo("v_resumo_mensal", "*", "mes"),
-        tudo("fechamentos", "*", "mes"),
-      ]);
+    const [maos, produtos, servicos, lotes, entregas, fechamento, resumo, fechamentos] = await Promise.all([
+      tudo("perfis", "id, usuario, nome, papel, whatsapp, endereco, pix, ativo, criado_em", "nome"),
+      tudo("produtos"),
+      tudo("servicos"),
+      tudo("v_lotes"),
+      tudo("v_entregas"),
+      tudo("v_fechamento", "*", "mes"),
+      tudo("v_resumo_mensal", "*", "mes"),
+      tudo("fechamentos", "*", "mes"),
+    ]);
 
     return json({
       gerado_em: new Date().toISOString(),
-      maos_de_obra: maos, produtos, servicos, precos, materiais,
-      lotes, lote_materiais: loteMateriais, entregas, producao,
-      resumo_mensal: resumo, fechamentos,
+      maos_de_obra: maos, produtos, servicos, lotes, entregas,
+      fechamento, resumo_mensal: resumo, fechamentos,
     });
   } catch (e) {
     return json({ erro: (e as Error).message }, 500);

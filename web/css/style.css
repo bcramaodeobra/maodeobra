@@ -202,3 +202,80 @@ textarea { min-height: 70px; resize: vertical; }
   body { background: #fff; }
   .card { box-shadow: none; border: 0; }
 }
+
+/* =====================================================================
+   PAINEL DO DONO — versão 2
+   ===================================================================== */
+:root { --amarelo: #f5c518; --cinza-btn: #9ca0a8; }
+.nav-dono {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: .25rem; flex-wrap: wrap;
+  background: var(--primary); color: #fff; padding: .35rem 1rem; min-height: 52px;
+  border-bottom: 3px solid #1a2640;
+}
+.nav-dono .abas { display: flex; gap: .2rem; overflow-x: auto; flex: 1; }
+.nav-dono .abas button {
+  background: none; border: 0; color: #fff; font: inherit; font-weight: 700; font-size: .86rem;
+  letter-spacing: .3px; text-transform: uppercase; padding: .7rem .85rem; cursor: pointer; white-space: nowrap;
+  border-radius: 8px;
+}
+.nav-dono .abas button:hover { background: rgba(255,255,255,.08); }
+.nav-dono .abas button.ativo { color: var(--amarelo); }
+.nav-dono .usuario { display: flex; align-items: center; gap: .35rem; font-size: .88rem; opacity: .95; }
+body.dono { background: #fff; min-height: 100vh; }
+html:has(body.dono) { background: #fff; }
+body.dono main { max-width: 1150px; }
+.titulo-pagina { text-align: center; font-size: 1.25rem; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin: 1.2rem 0 .3rem; }
+.data-hoje { font-weight: 700; font-size: .92rem; margin-bottom: .5rem; }
+
+.grade-nomes { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 1.1rem; margin: .4rem 0 1.5rem; }
+.btn-nome {
+  background: var(--primary); color: #fff; border: 0; border-radius: 9px; min-height: 60px;
+  font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; cursor: pointer; padding: .6rem;
+  box-shadow: 0 2px 6px rgba(20,24,35,.12); transition: transform .08s ease, box-shadow .15s ease;
+}
+.btn-nome:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(20,24,35,.18); }
+.btn-nome small { display: block; font-weight: 500; text-transform: none; font-size: .76rem; opacity: .85; margin-top: .15rem; letter-spacing: 0; }
+.btn-nome.inativo { background: var(--cinza-btn); color: #1f2430; font-weight: 600; box-shadow: none; }
+
+.modal.largo { max-width: 860px; }
+.ficha-topo { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+.ficha-contato { font-size: .88rem; color: var(--muted); }
+.ficha-contato a { color: var(--ok); font-weight: 600; text-decoration: none; }
+.totais { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin: 1rem 0; }
+.total { border-radius: 10px; padding: .7rem .85rem; background: #f4f6fa; border: 1px solid var(--line); }
+.total .r { font-size: .76rem; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; font-weight: 600; }
+.total .v { font-size: 1.3rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.total.escuro { background: var(--primary); color: #fff; border-color: var(--primary); }
+.total.escuro .r { color: #cfd6e4; }
+.total.amarelo { background: #fff8db; border-color: #f2d978; }
+
+.mini-lote { border: 1px solid var(--line); border-left: 5px solid var(--primary); border-radius: 10px; padding: .65rem .8rem; margin-bottom: .55rem; background: #fff; }
+.mini-lote .linha1 { display: flex; justify-content: space-between; gap: .6rem; flex-wrap: wrap; font-weight: 700; }
+.mini-lote .linha1 .valor { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini-lote .linha2 { font-size: .84rem; color: var(--muted); margin-top: .15rem; }
+.mini-lote .acoes { margin-top: .5rem; }
+.btn.pronto { background: var(--ok); text-transform: uppercase; letter-spacing: .3px; }
+.lista-final { list-style: none; padding: 0; margin: 0; }
+.lista-final li { display: flex; justify-content: space-between; gap: .6rem; align-items: center; padding: .45rem 0; border-bottom: 1px dashed var(--line); font-size: .9rem; }
+.lista-final li:last-child { border-bottom: 0; }
+.soma-final { display: flex; justify-content: space-between; margin-top: .6rem; padding: .7rem .9rem; border-radius: 10px; background: var(--ok-bg); color: var(--ok); font-weight: 800; font-size: 1.05rem; }
+.selo.pronto { background: var(--ok-bg); color: var(--ok); }
+.selo.parcial { background: var(--info-bg); color: var(--primary-2); }
+
+.produto-card .servico-linha { display: grid; grid-template-columns: 1fr 130px auto; gap: .5rem; align-items: center; padding: .4rem 0; border-bottom: 1px dashed var(--line); }
+.produto-card .servico-linha:last-of-type { border-bottom: 0; }
+.produto-card .novo-servico { display: grid; grid-template-columns: 1fr 130px auto; gap: .5rem; margin-top: .6rem; }
+.produto-card .inativo { opacity: .5; }
+
+.calc { max-width: 320px; }
+.calc .visor { background: var(--primary); color: #fff; border-radius: 10px; padding: .7rem .9rem; text-align: right; margin-bottom: .6rem; min-height: 76px; }
+.calc .visor .conta { font-size: .85rem; opacity: .7; min-height: 1.2em; word-break: break-all; }
+.calc .visor .numero { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; word-break: break-all; }
+.calc .teclas { display: grid; grid-template-columns: repeat(4, 1fr); gap: .45rem; }
+.calc .teclas button { font: inherit; font-size: 1.15rem; font-weight: 600; padding: .8rem 0; border-radius: 10px; border: 1px solid var(--line); background: #f4f6fa; cursor: pointer; }
+.calc .teclas button:hover { background: #e9edf4; }
+.calc .teclas .op { background: #e7edf7; color: var(--primary); }
+.calc .teclas .igual { background: var(--amarelo); border-color: var(--amarelo); }
+.calc .teclas .limpar { color: var(--bad); }
+.grid-admin { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; align-items: start; }

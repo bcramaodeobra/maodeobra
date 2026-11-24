@@ -66,9 +66,9 @@ Deno.serve(async (req) => {
           usuario,
           nome,
           papel: "mao_de_obra",
-          telefone: body.telefone || null,
+          whatsapp: body.whatsapp || null,
           endereco: body.endereco || null,
-          observacoes: body.observacoes || null,
+          pix: body.pix || null,
         });
         if (errPerfil) {
           await admin.auth.admin.deleteUser(novo.user.id);
