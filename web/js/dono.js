@@ -34,6 +34,7 @@ $("#abas").addEventListener("click", (e) => {
 async function render() {
   try {
     if (abaAtual === "inicio") await renderInicio();
+    if (abaAtual === "minha") await renderMinha();
     if (abaAtual === "maos") await renderMaos();
     if (abaAtual === "servicos") await renderServicos();
     if (abaAtual === "fechamentos") await renderFechamentos();
@@ -211,43 +212,321 @@ async function modalNovoLote(moId = "") {
   if (!maos.length) return aviso("Cadastre uma mão de obra primeiro.", true);
   if (!prodAtivos.length) return aviso("Cadastre um produto com pelo menos um serviço primeiro.", true);
 
+  const linhaItem = () => `<div class="item-lote">
+      <div class="linha">
+        <div><label>Produto *</label><select name="produto"><option value="">Selecione…</option>${prodAtivos.map((p) => `<option value="${p.id}">${esc(p.nome)}</option>`).join("")}</select></div>
+        <div><label>Serviço *</label><select name="servico" disabled><option value="">Escolha o produto</option></select></div>
+      </div>
+      <div class="linha" style="grid-template-columns:1fr 1fr auto;align-items:end">
+        <div><label>Quantidade de peças *</label><input name="quantidade" type="number" min="1" step="1" inputmode="numeric"></div>
+        <div><label>Valor por peça (R$)</label><input name="valor" type="number" min="0" step="0.01"></div>
+        <button type="button" class="btn perigo peq" data-remover title="Remover este serviço">✕</button>
+      </div>
+      <div class="item-sub"><span class="item-num"></span><span class="item-total">R$ 0,00</span></div>
+    </div>`;
+
   abrirModal({
     titulo: "Enviar lote",
     conteudo: `
       <div class="linha"><div><label>Mão de obra *</label><select name="mo" required>
         <option value="">Selecione…</option>${maos.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div></div>
-      <div class="linha">
-        <div><label>Produto *</label><select name="produto" required><option value="">Selecione…</option>${prodAtivos.map((p) => `<option value="${p.id}">${esc(p.nome)}</option>`).join("")}</select></div>
-        <div><label>Serviço *</label><select name="servico" required disabled><option value="">Escolha o produto</option></select></div>
-      </div>
-      <div class="linha">
-        <div><label>Quantidade de peças *</label><input name="quantidade" type="number" min="1" step="1" required inputmode="numeric"></div>
-        <div><label>Valor por peça (R$)</label><input name="valor" type="number" min="0" step="0.01"></div>
-      </div>
-      <div class="lote-total" style="margin:0 0 .8rem"><span>Total do lote</span><span id="prevTotal">R$ 0,00</span></div>
+      <div id="itens">${linhaItem()}</div>
+      <button type="button" class="btn sec bloco" id="addItem" style="margin-bottom:.8rem">＋ Adicionar outro serviço</button>
+      <div class="lote-total" style="margin:0 0 .8rem"><span id="qtdItens">Total</span><span id="prevTotal">R$ 0,00</span></div>
       <div class="linha"><div><label>Observação (opcional)</label><input name="obs" placeholder="Cor, tamanho, detalhe…"></div></div>
-      <button type="submit" class="btn bloco acento">Enviar lote</button>`,
+      <button type="submit" class="btn bloco acento">Enviar</button>`,
     aoAbrir: (f) => {
-      const total = () => ($("#prevTotal", f).textContent = moeda(Number(f.quantidade.value || 0) * Number(f.valor.value || 0)));
-      f.produto.onchange = () => {
-        const lista = servicos.filter((s) => s.produto_id == f.produto.value && s.ativo);
-        f.servico.innerHTML = `<option value="">Selecione…</option>` + lista.map((s) => `<option value="${s.id}" data-valor="${s.valor_unitario}">${esc(s.nome)} — ${moeda(s.valor_unitario)}</option>`).join("");
-        f.servico.disabled = !lista.length; f.valor.value = ""; total();
+      const itens = $("#itens", f);
+      const atualizar = () => {
+        const linhas = $$(".item-lote", itens);
+        let total = 0;
+        linhas.forEach((r, i) => {
+          const t = Number($("[name=quantidade]", r).value || 0) * Number($("[name=valor]", r).value || 0);
+          total += t;
+          $(".item-num", r).textContent = linhas.length > 1 ? `Serviço ${i + 1}` : "Total deste serviço";
+          $(".item-total", r).textContent = moeda(t);
+          $("[data-remover]", r).style.visibility = linhas.length > 1 ? "visible" : "hidden";
+        });
+        $("#qtdItens", f).textContent = linhas.length > 1 ? `Total dos ${linhas.length} serviços` : "Total do lote";
+        $("#prevTotal", f).textContent = moeda(total);
       };
-      f.servico.onchange = () => { f.valor.value = f.servico.selectedOptions[0]?.dataset.valor ?? ""; total(); };
-      f.quantidade.oninput = f.valor.oninput = total;
+      itens.addEventListener("change", (e) => {
+        const r = e.target.closest(".item-lote");
+        if (e.target.name === "produto") {
+          const lista = servicos.filter((s) => s.produto_id == e.target.value && s.ativo);
+          const sel = $("[name=servico]", r);
+          sel.innerHTML = `<option value="">Selecione…</option>` + lista.map((s) => `<option value="${s.id}" data-valor="${s.valor_unitario}">${esc(s.nome)} — ${moeda(s.valor_unitario)}</option>`).join("");
+          sel.disabled = !lista.length; $("[name=valor]", r).value = "";
+        }
+        if (e.target.name === "servico") $("[name=valor]", r).value = e.target.selectedOptions[0]?.dataset.valor ?? "";
+        atualizar();
+      });
+      itens.addEventListener("input", atualizar);
+      itens.addEventListener("click", (e) => { if (e.target.closest("[data-remover]")) { e.target.closest(".item-lote").remove(); atualizar(); } });
+      $("#addItem", f).onclick = () => { itens.insertAdjacentHTML("beforeend", linhaItem()); atualizar(); };
+      atualizar();
+    },
+    onSubmit: async (fd, f) => {
+      const mo = fd.get("mo");
+      if (!mo) throw new Error("Escolha a mão de obra.");
+      const lista = $$(".item-lote", f).map((r, i) => ({
+        n: i + 1,
+        servico: Number($("[name=servico]", r).value),
+        qtd: parseInt($("[name=quantidade]", r).value, 10),
+        valor: $("[name=valor]", r).value,
+      }));
+      for (const it of lista) {
+        if (!it.servico) throw new Error(`Escolha o produto e o serviço${lista.length > 1 ? ` (serviço ${it.n})` : ""}.`);
+        if (!(it.qtd > 0)) throw new Error(`Informe a quantidade de peças${lista.length > 1 ? ` (serviço ${it.n})` : ""}.`);
+      }
+      let enviados = 0;
+      try {
+        for (const it of lista) {
+          await rpc("enviar_lote", {
+            p_mao_de_obra: mo, p_servico: it.servico, p_quantidade: it.qtd,
+            p_observacoes: fd.get("obs") || null, p_valor_unitario: it.valor === "" ? null : Number(it.valor),
+          });
+          enviados++;
+        }
+      } catch (e) {
+        if (enviados) { renderInicio(); throw new Error(`${enviados} de ${lista.length} enviados. Erro no serviço ${enviados + 1}: ${e.message}`); }
+        throw e;
+      }
+      aviso(lista.length > 1 ? `${lista.length} lotes enviados!` : "Lote enviado!");
+      if (abaAtual === "inicio") renderInicio();
+      if (moId) abrirFicha(mo);
+    },
+  });
+}
+
+// ===============================================================
+// MINHA MÃO DE OBRA — serviço que o dono pega das empresas
+// ===============================================================
+let mesMinha = inicioMes().slice(0, 7);
+
+async function renderMinha() {
+  const mes = `${mesMinha}-01`;
+  const [entradas, distrib, entregasMes, empresas] = await Promise.all([
+    q(sb.from("v_entradas").select("*").eq("mes_ref", mes).order("data", { ascending: false }).order("id", { ascending: false })),
+    q(sb.from("v_distribuicao").select("*").order("produto_nome").order("servico_nome")),
+    q(sb.from("v_entregas").select("valor").eq("mes_ref", mes)),
+    q(sb.from("empresas").select("*").order("nome")),
+  ]);
+  const receber = soma(entradas, "valor_total");
+  const pagar = soma(entregasMes, "valor");
+  const porEmpresa = {};
+  entradas.forEach((e) => {
+    porEmpresa[e.empresa_nome] ??= { qtd: 0, valor: 0 };
+    porEmpresa[e.empresa_nome].qtd += e.quantidade; porEmpresa[e.empresa_nome].valor += Number(e.valor_total);
+  });
+
+  main.innerHTML = `
+    <div class="titulo-pagina">Minha mão de obra</div>
+    <div class="section-head"><span class="muted small">Tudo o que o Bruno recebe das empresas para distribuir às mãos de obra.</span>
+      <span style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+        <input type="month" id="mesMinha" value="${mesMinha}" style="width:auto">
+        <button class="btn sec" id="btnEmpresas">🏢 Empresas</button>
+        <button class="btn acento" id="btnEntrada">＋ Nova entrada</button>
+      </span></div>
+    <div class="totais">
+      <div class="total escuro"><div class="r">A receber das empresas</div><div class="v">${moeda(receber)}</div></div>
+      <div class="total"><div class="r">Pagar às mãos de obra (finalizado)</div><div class="v">${moeda(pagar)}</div></div>
+      <div class="total ${receber - pagar >= 0 ? "verde" : "amarelo"}"><div class="r">Lucro estimado do mês</div><div class="v">${moeda(receber - pagar)}</div></div>
+    </div>
+
+    <div class="grid-admin">
+      <div class="card">
+        <h2>Falta distribuir</h2>
+        <p class="muted small" style="margin-top:0">Total que entrou das empresas menos o que já foi enviado em lotes (todos os meses).</p>
+        ${distrib.length ? `<div class="tabela-wrap"><table>
+          <thead><tr><th>Produto · serviço</th><th class="right">Entrou</th><th class="right">Distribuído</th><th class="right">Falta</th></tr></thead>
+          <tbody>${distrib.map((d) => `<tr><td>${esc(d.produto_nome)} · ${esc(d.servico_nome)}</td>
+            <td class="right num">${inteiro(d.entrou)}</td><td class="right num">${inteiro(d.distribuido)}</td>
+            <td class="right num">${d.falta > 0 ? `<strong>${inteiro(d.falta)}</strong>` : d.falta < 0 ? `<span class="small" style="color:var(--warn)" title="Foi distribuído mais do que entrou">${inteiro(d.falta)} ⚠</span>` : "0 ✓"}</td></tr>`).join("")}</tbody>
+        </table></div>` : `<p class="muted">Nenhuma entrada ainda.</p>`}
+      </div>
+      <div class="card">
+        <h2>Por empresa em ${nomeMes(mes).split(" ")[0].toLowerCase()}</h2>
+        ${Object.keys(porEmpresa).length ? `<ul class="lista-final">${Object.entries(porEmpresa).sort((a, b) => b[1].valor - a[1].valor).map(([n, v]) =>
+          `<li><span><strong>${esc(n)}</strong><br><span class="small muted">${inteiro(v.qtd)} peças</span></span><strong class="num">${moeda(v.valor)}</strong></li>`).join("")}</ul>`
+          : `<p class="muted">Nenhuma entrada neste mês.</p>`}
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:1rem">
+      <h2>Entradas de ${nomeMes(mes).toLowerCase()}</h2>
+      ${entradas.length ? entradas.map((e) => `
+        <div class="mini-lote entrada">
+          <div class="linha1"><span>${diaMes(e.data)} – ${esc(maiusc(e.empresa_nome))} – ${esc(maiusc(e.produto_nome))}: ${esc(maiusc(e.servico_nome))} – ${inteiro(e.quantidade)} PEÇAS</span>
+            <span class="valor">${moeda(e.valor_total)}</span></div>
+          <div class="linha2">Empresa paga ${moeda(e.valor_unitario)}/peça · mão de obra ${moeda(e.valor_mao_de_obra)}/peça ·
+            lucro <strong>${moeda((e.valor_unitario - e.valor_mao_de_obra) * e.quantidade)}</strong>${e.observacoes ? `<br>Obs.: ${esc(e.observacoes)}` : ""}</div>
+          <div class="acoes"><button class="btn sec peq" data-edent="${e.id}">Editar</button><button class="btn perigo peq" data-rment="${e.id}">Excluir</button></div>
+        </div>`).join("") : `<div class="card vazio">Nenhuma entrada em ${nomeMes(mes).toLowerCase()}. Clique em <strong>＋ Nova entrada</strong>.</div>`}
+    </div>`;
+
+  $("#mesMinha").onchange = (e) => { mesMinha = e.target.value || mesMinha; renderMinha(); };
+  $("#btnEntrada").onclick = () => modalEntrada(empresas);
+  $("#btnEmpresas").onclick = () => modalEmpresas(empresas);
+  $$("[data-rment]", main).forEach((b) => (b.onclick = async () => {
+    if (!(await confirmar("Excluir esta entrada?", "Excluir"))) return;
+    try { await q(sb.from("entradas").delete().eq("id", b.dataset.rment)); aviso("Entrada excluída."); renderMinha(); } catch (e) { aviso(e.message, true); }
+  }));
+  $$("[data-edent]", main).forEach((b) => (b.onclick = () => {
+    const e = entradas.find((x) => x.id == b.dataset.edent);
+    abrirModal({
+      titulo: `Editar entrada — ${e.empresa_nome}`,
+      conteudo: `<p class="muted small">${esc(e.produto_nome)}: ${esc(e.servico_nome)}</p>
+        <div class="linha">
+          <div><label>Data</label><input name="data" type="date" value="${e.data}" required></div>
+          <div><label>Quantidade de peças</label><input name="qtd" type="number" min="1" value="${e.quantidade}" required></div>
+          <div><label>Empresa paga (R$/peça)</label><input name="valor" type="number" step="0.01" min="0" value="${e.valor_unitario}" required></div>
+        </div>
+        <div class="linha"><div><label>Observação</label><input name="obs" value="${esc(e.observacoes)}"></div></div>
+        <button type="submit" class="btn bloco">Salvar</button>`,
+      onSubmit: async (fd) => {
+        const qtd = parseInt(fd.get("qtd"), 10);
+        if (!(qtd > 0) || fd.get("valor") === "" || !fd.get("data")) throw new Error("Preencha data, quantidade e valor.");
+        await q(sb.from("entradas").update({ data: fd.get("data"), quantidade: qtd, valor_unitario: Number(fd.get("valor")), observacoes: fd.get("obs") || null }).eq("id", e.id));
+        aviso("Entrada atualizada!"); renderMinha();
+      },
+    });
+  }));
+}
+
+async function modalEntrada(empresas) {
+  const { produtos, servicos } = await carregarCatalogo();
+  const prodAtivos = produtos.filter((p) => p.ativo && servicos.some((s) => s.produto_id === p.id && s.ativo));
+  if (!prodAtivos.length) return aviso("Cadastre os produtos e serviços primeiro (aba Cadastros serviços).", true);
+  const ativas = empresas.filter((e) => e.ativo);
+  const hoje = new Date(); const z = (n) => String(n).padStart(2, "0");
+  const hojeIso = `${hoje.getFullYear()}-${z(hoje.getMonth() + 1)}-${z(hoje.getDate())}`;
+
+  const linhaItem = () => `<div class="item-lote">
+      <div class="linha">
+        <div><label>Produto *</label><select name="produto"><option value="">Selecione…</option>${prodAtivos.map((p) => `<option value="${p.id}">${esc(p.nome)}</option>`).join("")}</select></div>
+        <div><label>Serviço *</label><select name="servico" disabled><option value="">Escolha o produto</option></select></div>
+      </div>
+      <div class="linha" style="grid-template-columns:1fr 1fr auto;align-items:end">
+        <div><label>Quantidade de peças *</label><input name="quantidade" type="number" min="1" step="1" inputmode="numeric"></div>
+        <div><label>Empresa paga (R$/peça) *</label><input name="valor" type="number" min="0" step="0.01"></div>
+        <button type="button" class="btn perigo peq" data-remover title="Remover">✕</button>
+      </div>
+      <div class="item-sub"><span class="item-num"></span><span class="item-total">R$ 0,00</span></div>
+    </div>`;
+
+  abrirModal({
+    titulo: "Nova entrada de serviço",
+    conteudo: `
+      <div class="linha" style="grid-template-columns:2fr 1fr">
+        <div><label>Empresa *</label><select name="empresa">
+          <option value="">Selecione…</option>${ativas.map((e) => `<option value="${e.id}">${esc(e.nome)}</option>`).join("")}
+          <option value="nova">＋ Cadastrar nova empresa…</option></select></div>
+        <div><label>Data *</label><input name="data" type="date" value="${hojeIso}" required></div>
+      </div>
+      <div class="linha hidden" id="novaEmpresa"><div><label>Nome da nova empresa *</label><input name="empresa_nome" placeholder="Ex.: Lar Decor"></div></div>
+      <div id="itens">${linhaItem()}</div>
+      <button type="button" class="btn sec bloco" id="addItem" style="margin-bottom:.8rem">＋ Adicionar outro serviço</button>
+      <div class="lote-total" style="margin:0 0 .4rem"><span id="qtdItens">Total a receber</span><span id="prevTotal">R$ 0,00</span></div>
+      <p class="small muted" id="prevLucro" style="margin:0 0 .8rem"></p>
+      <div class="linha"><div><label>Observação (opcional)</label><input name="obs" placeholder="Nota fiscal, pedido, prazo…"></div></div>
+      <button type="submit" class="btn bloco acento">Registrar entrada</button>`,
+    aoAbrir: (f) => {
+      const itens = $("#itens", f);
+      f.empresa.onchange = () => $("#novaEmpresa", f).classList.toggle("hidden", f.empresa.value !== "nova");
+      const atualizar = () => {
+        const linhas = $$(".item-lote", itens);
+        let total = 0, lucro = 0;
+        linhas.forEach((r, i) => {
+          const qtd = Number($("[name=quantidade]", r).value || 0), v = Number($("[name=valor]", r).value || 0);
+          const mo = Number($("[name=servico]", r).selectedOptions[0]?.dataset.mo || 0);
+          total += qtd * v; lucro += qtd * (v - mo);
+          $(".item-num", r).textContent = mo ? `Mão de obra recebe ${moeda(mo)}/peça · lucro ${moeda(v - mo)}/peça` : (linhas.length > 1 ? `Serviço ${i + 1}` : "");
+          $(".item-total", r).textContent = moeda(qtd * v);
+          $("[data-remover]", r).style.visibility = linhas.length > 1 ? "visible" : "hidden";
+        });
+        $("#qtdItens", f).textContent = linhas.length > 1 ? `Total a receber (${linhas.length} serviços)` : "Total a receber";
+        $("#prevTotal", f).textContent = moeda(total);
+        $("#prevLucro", f).innerHTML = total ? `Lucro estimado: <strong>${moeda(lucro)}</strong>` : "";
+      };
+      itens.addEventListener("change", (e) => {
+        const r = e.target.closest(".item-lote");
+        if (e.target.name === "produto") {
+          const lista = servicos.filter((s) => s.produto_id == e.target.value && s.ativo);
+          const sel = $("[name=servico]", r);
+          sel.innerHTML = `<option value="">Selecione…</option>` + lista.map((s) => `<option value="${s.id}" data-cliente="${s.valor_cliente ?? ""}" data-mo="${s.valor_unitario}">${esc(s.nome)}</option>`).join("");
+          sel.disabled = !lista.length; $("[name=valor]", r).value = "";
+        }
+        if (e.target.name === "servico") $("[name=valor]", r).value = e.target.selectedOptions[0]?.dataset.cliente ?? "";
+        atualizar();
+      });
+      itens.addEventListener("input", atualizar);
+      itens.addEventListener("click", (e) => { if (e.target.closest("[data-remover]")) { e.target.closest(".item-lote").remove(); atualizar(); } });
+      $("#addItem", f).onclick = () => { itens.insertAdjacentHTML("beforeend", linhaItem()); atualizar(); };
+      atualizar();
+    },
+    onSubmit: async (fd, f) => {
+      let empresa = fd.get("empresa");
+      if (!empresa) throw new Error("Escolha a empresa.");
+      if (!fd.get("data")) throw new Error("Informe a data.");
+      const lista = $$(".item-lote", f).map((r, i) => ({
+        n: i + 1, servico: Number($("[name=servico]", r).value), produto: Number($("[name=produto]", r).value),
+        qtd: parseInt($("[name=quantidade]", r).value, 10), valor: $("[name=valor]", r).value,
+      }));
+      for (const it of lista) {
+        const sfx = lista.length > 1 ? ` (serviço ${it.n})` : "";
+        if (!it.servico) throw new Error(`Escolha o produto e o serviço${sfx}.`);
+        if (!(it.qtd > 0)) throw new Error(`Informe a quantidade de peças${sfx}.`);
+        if (it.valor === "" || Number(it.valor) < 0) throw new Error(`Informe quanto a empresa paga por peça${sfx}.`);
+      }
+      if (empresa === "nova") {
+        const nome = String(fd.get("empresa_nome") || "").trim();
+        if (!nome) throw new Error("Informe o nome da nova empresa.");
+        const [nova] = await q(sb.from("empresas").insert({ nome }).select());
+        empresa = nova.id;
+      }
+      await q(sb.from("entradas").insert(lista.map((it) => ({
+        empresa_id: Number(empresa), produto_id: it.produto, servico_id: it.servico, quantidade: it.qtd,
+        valor_unitario: Number(it.valor), data: fd.get("data"), observacoes: fd.get("obs") || null,
+      }))));
+      aviso(lista.length > 1 ? `${lista.length} entradas registradas!` : "Entrada registrada!");
+      renderMinha();
+    },
+  });
+}
+
+function modalEmpresas(empresas) {
+  abrirModal({
+    titulo: "Empresas",
+    conteudo: `
+      ${empresas.length ? `<ul class="lista-final">${empresas.map((e) => `<li class="${e.ativo ? "" : "muted"}">
+        <span><strong>${esc(e.nome)}</strong>${e.whatsapp ? `<br><span class="small">${esc(e.whatsapp)}</span>` : ""}${e.ativo ? "" : " <span class='small'>(inativa)</span>"}</span>
+        <button type="button" class="btn sec peq" data-edemp="${e.id}">Editar</button></li>`).join("")}</ul>` : `<p class="muted">Nenhuma empresa cadastrada.</p>`}
+      <h3 style="margin-top:1rem">Nova empresa</h3>
+      <div class="linha"><div><label>Nome *</label><input name="nome"></div><div><label>WhatsApp</label><input name="whatsapp" inputmode="tel"></div></div>
+      <button type="submit" class="btn bloco">Adicionar empresa</button>`,
+    aoAbrir: (f, fechar) => {
+      $$("[data-edemp]", f).forEach((b) => (b.onclick = () => {
+        const e = empresas.find((x) => x.id == b.dataset.edemp);
+        fechar();
+        abrirModal({
+          titulo: "Editar empresa",
+          conteudo: `<div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(e.nome)}" required></div><div><label>WhatsApp</label><input name="whatsapp" value="${esc(e.whatsapp)}"></div></div>
+            <label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="ativo" style="width:auto" ${e.ativo ? "checked" : ""}> Ativa</label>
+            <button type="submit" class="btn bloco">Salvar</button>`,
+          onSubmit: async (fd) => {
+            if (!fd.get("nome")) throw new Error("Informe o nome.");
+            await q(sb.from("empresas").update({ nome: fd.get("nome"), whatsapp: fd.get("whatsapp") || null, ativo: fd.get("ativo") === "on" }).eq("id", e.id));
+            aviso("Empresa salva!"); renderMinha();
+          },
+        });
+      }));
     },
     onSubmit: async (fd) => {
-      if (!fd.get("mo") || !fd.get("servico")) throw new Error("Escolha a mão de obra, o produto e o serviço.");
-      const qtd = parseInt(fd.get("quantidade"), 10);
-      if (!(qtd > 0)) throw new Error("Informe a quantidade de peças.");
-      await rpc("enviar_lote", {
-        p_mao_de_obra: fd.get("mo"), p_servico: Number(fd.get("servico")), p_quantidade: qtd,
-        p_observacoes: fd.get("obs") || null, p_valor_unitario: fd.get("valor") === "" ? null : Number(fd.get("valor")),
-      });
-      aviso("Lote enviado!");
-      if (abaAtual === "inicio") renderInicio();
-      if (moId) abrirFicha(fd.get("mo"));
+      const nome = String(fd.get("nome") || "").trim();
+      if (!nome) throw new Error("Informe o nome da empresa.");
+      await q(sb.from("empresas").insert({ nome, whatsapp: fd.get("whatsapp") || null }));
+      aviso("Empresa adicionada!"); renderMinha();
     },
   });
 }
@@ -337,26 +616,32 @@ async function renderMaos() {
 // ===============================================================
 async function renderServicos() {
   const { produtos, servicos } = await carregarCatalogo();
+  const lucroTxt = (s) => s.valor_cliente == null ? `<span class="muted small">—</span>`
+    : `<span class="${s.valor_cliente - s.valor_unitario >= 0 ? "lucro-pos" : "lucro-neg"}">${moeda(s.valor_cliente - s.valor_unitario)}</span>`;
   main.innerHTML = `
     <div class="titulo-pagina">Cadastros serviços</div>
-    <div class="section-head"><span class="muted small">Cada produto tem seus serviços, e cada serviço tem o valor pago por peça.</span>
+    <div class="section-head"><span class="muted small">Cada serviço tem dois valores por peça: o que a <strong>empresa paga</strong> ao Bruno e o que ele <strong>paga à mão de obra</strong>.</span>
       <button class="btn" id="novoProduto">＋ Novo produto</button></div>
-    ${produtos.length ? `<div class="grid cards">${produtos.map((p) => {
+    ${produtos.length ? `<div class="grid cards-largos">${produtos.map((p) => {
       const lista = servicos.filter((s) => s.produto_id === p.id);
       return `<div class="card produto-card ${p.ativo ? "" : "inativo"}">
         <div class="section-head" style="margin-bottom:.3rem">
           <h2 style="margin:0">${esc(maiusc(p.nome))}</h2>
           <span><button class="btn sec peq" data-edprod="${p.id}">Editar</button></span>
         </div>
-        ${!p.ativo ? `<p class="small muted">Produto inativo (não aparece ao enviar lote)</p>` : ""}
-        ${lista.length ? lista.map((s) => `<div class="servico-linha ${s.ativo ? "" : "inativo"}">
+        ${!p.ativo ? `<p class="small muted">Produto inativo (não aparece nas listas)</p>` : ""}
+        ${lista.length ? `<div class="servico-linha cab"><span>Serviço</span><span class="right">Empresa paga</span><span class="right">Mão de obra</span><span class="right">Lucro/peça</span><span></span></div>
+          ${lista.map((s) => `<div class="servico-linha ${s.ativo ? "" : "inativo"}">
             <span>${esc(s.nome)}${s.ativo ? "" : " <span class='small'>(inativo)</span>"}</span>
+            <span class="right num">${s.valor_cliente == null ? "—" : moeda(s.valor_cliente)}</span>
             <strong class="right num">${moeda(s.valor_unitario)}</strong>
-            <button class="btn sec peq" data-edserv="${s.id}">Editar</button></div>`).join("")
+            <span class="right num">${lucroTxt(s)}</span>
+            <button class="btn sec peq" data-edserv="${s.id}">Editar</button></div>`).join("")}`
           : `<p class="muted small">Nenhum serviço ainda.</p>`}
         <form class="novo-servico" data-addserv="${p.id}">
           <input name="nome" placeholder="Novo serviço (ex.: Bainha)" required>
-          <input name="valor" type="number" step="0.01" min="0" placeholder="R$ por peça" required>
+          <input name="cliente" type="number" step="0.01" min="0" placeholder="Empresa paga R$">
+          <input name="valor" type="number" step="0.01" min="0" placeholder="Mão de obra R$" required>
           <button class="btn peq" type="submit">＋</button>
         </form>
       </div>`;
@@ -380,24 +665,35 @@ async function renderServicos() {
   $$("[data-addserv]", main).forEach((f) => f.addEventListener("submit", async (e) => {
     e.preventDefault();
     const nome = f.nome.value.trim(), valor = Number(f.valor.value);
-    if (!nome || f.valor.value === "" || valor < 0) return aviso("Informe o nome e o valor do serviço.", true);
-    try { await q(sb.from("servicos").insert({ produto_id: Number(f.dataset.addserv), nome, valor_unitario: valor })); aviso("Serviço adicionado!"); renderServicos(); }
-    catch (err) { aviso(err.message, true); }
+    if (!nome || f.valor.value === "" || valor < 0) return aviso("Informe o nome e o valor pago à mão de obra.", true);
+    try {
+      await q(sb.from("servicos").insert({ produto_id: Number(f.dataset.addserv), nome, valor_unitario: valor,
+        valor_cliente: f.cliente.value === "" ? null : Number(f.cliente.value) }));
+      aviso("Serviço adicionado!"); renderServicos();
+    } catch (err) { aviso(err.message, true); }
   }));
 
   $$("[data-edserv]", main).forEach((b) => (b.onclick = () => {
     const s = servicos.find((x) => x.id == b.dataset.edserv);
     abrirModal({
       titulo: `Editar serviço — ${nomeDe(produtos, s.produto_id)}`,
-      conteudo: `<div class="linha">
-          <div><label>Serviço *</label><input name="nome" value="${esc(s.nome)}" required></div>
-          <div><label>R$ por peça *</label><input name="valor" type="number" step="0.01" min="0" value="${s.valor_unitario}" required></div></div>
+      conteudo: `<div class="linha"><div><label>Serviço *</label><input name="nome" value="${esc(s.nome)}" required></div></div>
+        <div class="linha">
+          <div><label>Empresa paga (R$ por peça)</label><input name="cliente" type="number" step="0.01" min="0" value="${s.valor_cliente ?? ""}"></div>
+          <div><label>Mão de obra recebe (R$ por peça) *</label><input name="valor" type="number" step="0.01" min="0" value="${s.valor_unitario}" required></div>
+        </div>
+        <p class="small" id="lucroPrev"></p>
         <label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem"><input type="checkbox" name="ativo" style="width:auto" ${s.ativo ? "checked" : ""}> Ativo</label>
-        <p class="muted small">Mudar o valor não altera lotes já enviados.</p>
+        <p class="muted small">Mudar os valores não altera lotes nem entradas já lançados.</p>
         <button type="submit" class="btn bloco">Salvar</button>`,
+      aoAbrir: (f) => {
+        const at = () => ($("#lucroPrev", f).innerHTML = f.cliente.value === "" ? "" : `Lucro por peça: <strong>${moeda(Number(f.cliente.value) - Number(f.valor.value || 0))}</strong>`);
+        f.cliente.oninput = f.valor.oninput = at; at();
+      },
       onSubmit: async (fd) => {
-        if (!fd.get("nome") || fd.get("valor") === "") throw new Error("Informe nome e valor.");
-        await q(sb.from("servicos").update({ nome: fd.get("nome"), valor_unitario: Number(fd.get("valor")), ativo: fd.get("ativo") === "on" }).eq("id", s.id));
+        if (!fd.get("nome") || fd.get("valor") === "") throw new Error("Informe o nome e o valor da mão de obra.");
+        await q(sb.from("servicos").update({ nome: fd.get("nome"), valor_unitario: Number(fd.get("valor")),
+          valor_cliente: fd.get("cliente") === "" ? null : Number(fd.get("cliente")), ativo: fd.get("ativo") === "on" }).eq("id", s.id));
         aviso("Salvo!"); renderServicos();
       },
     });
@@ -411,7 +707,7 @@ const nomeDe = (lista, id) => lista.find((x) => x.id == id)?.nome ?? "";
 async function renderFechamentos() {
   const mes = `${mesFechamento}-01`;
   const [itens, resumo, maos] = await Promise.all([
-    q(sb.from("v_fechamento").select("*").eq("mes", mes).order("mao_de_obra_nome").order("produto_nome").order("servico_nome")),
+    q(sb.from("v_fechamento").select("*").eq("mes", mes).order("produto_nome").order("servico_nome")),
     q(sb.from("v_resumo_mensal").select("*").eq("mes", mes)),
     carregarMaos(false),
   ]);
@@ -419,53 +715,69 @@ async function renderFechamentos() {
   const pago = resumo.filter((r) => r.pago_em).reduce((s, r) => s + Number(r.valor_total), 0);
   const porMao = {};
   itens.forEach((i) => { (porMao[i.mao_de_obra_id] ??= []).push(i); });
+  const valorDe = (id) => resumo.find((r) => r.mao_de_obra_id === id);
+  // Mostra todas as mãos de obra ativas + quem teve entrega no mês (mesmo inativa)
+  const lista = maos.filter((m) => m.ativo || valorDe(m.id));
 
   main.innerHTML = `
     <div class="titulo-pagina">Fechamentos</div>
-    <div class="section-head"><span class="muted small">Soma das entregas parciais e dos lotes prontos de cada mês.</span>
+    <div class="section-head"><span class="muted small">Valor a receber de cada mão de obra no mês (entregas parciais + lotes prontos).</span>
       <input type="month" id="mesSel" value="${mesFechamento}" style="width:auto"></div>
     <div class="totais">
       <div class="total escuro"><div class="r">Total de ${nomeMes(mes).toLowerCase()}</div><div class="v">${moeda(total)}</div></div>
       <div class="total"><div class="r">Já pago</div><div class="v">${moeda(pago)}</div></div>
       <div class="total amarelo"><div class="r">Falta pagar</div><div class="v">${moeda(total - pago)}</div></div>
     </div>
-    ${resumo.length ? resumo.sort((a, b) => a.mao_de_obra_nome.localeCompare(b.mao_de_obra_nome)).map((r) => {
-      const mo = maos.find((x) => x.id === r.mao_de_obra_id) || {};
-      const linhas = porMao[r.mao_de_obra_id] || [];
-      return `<div class="card section">
-        <div class="section-head"><h2 style="margin:0">${esc(maiusc(r.mao_de_obra_nome))}</h2>
-          <span>${r.pago_em ? selo("pago", "Pago em " + dataBR(r.pago_em)) : selo("aberto", "A pagar")}</span></div>
-        ${mo.pix ? `<p class="small muted" style="margin:0 0 .5rem">PIX: <strong>${esc(mo.pix)}</strong></p>` : ""}
-        <div class="tabela-wrap"><table>
-          <thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
-          <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td>
-            <td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
-          <tfoot><tr><td colspan="2">Total</td><td class="right num">${inteiro(r.quantidade)}</td><td></td><td class="right num">${moeda(r.valor_total)}</td></tr></tfoot>
-        </table></div>
-        <div class="acoes">
-          ${r.pago_em ? `<button class="btn perigo peq" data-reabrir="${r.fechamento_id}">Reabrir</button>`
-            : `<button class="btn ok peq" data-pagar="${r.mao_de_obra_id}">Marcar como pago</button>`}
-          <button class="btn sec peq" data-recibo="${r.mao_de_obra_id}">🖨️ Recibo</button>
-        </div>
-      </div>`;
-    }).join("") : `<div class="card vazio">Nenhuma entrega em ${nomeMes(mes).toLowerCase()}.</div>`}`;
+    ${lista.length ? `<div class="grade-fech">${lista.map((m) => {
+      const r = valorDe(m.id);
+      return `<button class="cartao-fech ${r ? "" : "zerado"}" data-det="${m.id}">
+        <span class="nome">${esc(maiusc(m.nome))}</span>
+        <span class="valor">R$ <b>${moeda(r ? r.valor_total : 0).replace("R$", "").trim()}</b></span>
+        ${r?.pago_em ? `<span class="tag-pago">PAGO</span>` : ""}
+      </button>`;
+    }).join("")}</div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
 
   $("#mesSel").onchange = (e) => { mesFechamento = e.target.value || mesFechamento; renderFechamentos(); };
-  $$("[data-pagar]", main).forEach((b) => (b.onclick = async () => {
-    const r = resumo.find((x) => x.mao_de_obra_id === b.dataset.pagar);
+  $$("[data-det]", main).forEach((b) => (b.onclick = () => {
+    const mo = maos.find((x) => x.id === b.dataset.det);
+    const r = valorDe(mo.id) || { mao_de_obra_id: mo.id, mao_de_obra_nome: mo.nome, quantidade: 0, valor_total: 0 };
+    detalheFechamento(r, porMao[mo.id] || [], mo, mes);
+  }));
+}
+
+function detalheFechamento(r, linhas, mo, mes) {
+  const m = abrirModal({
+    titulo: `${maiusc(mo.nome)} — ${nomeMes(mes)}`,
+    largo: true,
+    conteudo: `
+      <div class="ficha-topo"><div class="ficha-contato">${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong>` : ""}</div>
+        <span>${r.pago_em ? selo("pago", "Pago em " + dataBR(r.pago_em)) : linhas.length ? selo("aberto", "A pagar") : ""}</span></div>
+      ${linhas.length ? `<div class="tabela-wrap" style="margin-top:.6rem"><table>
+        <thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
+        <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td>
+          <td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="right num">${inteiro(r.quantidade)}</td><td></td><td class="right num">${moeda(r.valor_total)}</td></tr></tfoot>
+      </table></div>
+      <div class="acoes">
+        ${r.pago_em ? `<button type="button" class="btn perigo peq" id="fReabrir">Reabrir</button>`
+          : `<button type="button" class="btn ok peq" id="fPagar">Marcar como pago</button>`}
+        <button type="button" class="btn acento peq" id="fNota">📩 Enviar nota</button>
+        <button type="button" class="btn sec peq" id="fRecibo">🖨️ Recibo</button>
+      </div>` : `<p class="muted">Nada finalizado neste mês.</p>`}`,
+  });
+  const f = m.form;
+  $("#fPagar", f)?.addEventListener("click", async () => {
     if (!(await confirmar(`Marcar ${moeda(r.valor_total)} de ${r.mao_de_obra_nome} (${nomeMes(mes).toLowerCase()}) como pago? As entregas deste mês ficam travadas.`, "Marcar como pago"))) return;
-    try { await rpc("fechar_mes", { p_mao_de_obra: r.mao_de_obra_id, p_mes: mes }); aviso("Marcado como pago!"); renderFechamentos(); }
+    try { await rpc("fechar_mes", { p_mao_de_obra: r.mao_de_obra_id, p_mes: mes }); aviso("Marcado como pago!"); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
-  }));
-  $$("[data-reabrir]", main).forEach((b) => (b.onclick = async () => {
+  });
+  $("#fReabrir", f)?.addEventListener("click", async () => {
     if (!(await confirmar("Reabrir este fechamento? Ele volta para 'a pagar'.", "Reabrir"))) return;
-    try { await rpc("reabrir_mes", { p_fechamento: Number(b.dataset.reabrir) }); aviso("Fechamento reaberto."); renderFechamentos(); }
+    try { await rpc("reabrir_mes", { p_fechamento: Number(r.fechamento_id) }); aviso("Fechamento reaberto."); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
-  }));
-  $$("[data-recibo]", main).forEach((b) => (b.onclick = () => {
-    const r = resumo.find((x) => x.mao_de_obra_id === b.dataset.recibo);
-    imprimirRecibo(r, porMao[r.mao_de_obra_id] || [], maos.find((x) => x.id === r.mao_de_obra_id) || {}, mes);
-  }));
+  });
+  $("#fRecibo", f)?.addEventListener("click", () => imprimirRecibo(r, linhas, mo, mes));
+  $("#fNota", f)?.addEventListener("click", () => { m.fechar(); abaAtual = "admin"; $$("#abas button").forEach((x) => x.classList.toggle("ativo", x.dataset.aba === "admin")); renderAdmin({ moId: mo.id, mes: mes.slice(0, 7) }); });
 }
 
 function imprimirRecibo(r, linhas, mo, mes) {
@@ -486,10 +798,28 @@ function imprimirRecibo(r, linhas, mo, mes) {
 // ===============================================================
 // ADMINISTRATIVO — calculadora e backup
 // ===============================================================
-async function renderAdmin() {
-  const conf = Object.fromEntries((await q(sb.from("configuracoes").select("*"))).map((c) => [c.chave, c.valor]));
+async function renderAdmin(pre = {}) {
+  const [conf, maos, notas] = await Promise.all([
+    q(sb.from("configuracoes").select("*")).then((l) => Object.fromEntries(l.map((c) => [c.chave, c.valor]))),
+    carregarMaos(false),
+    q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(15)),
+  ]);
+  const mesPag = pre.mes || inicioMes().slice(0, 7);
+  const nomeMo = (id) => maos.find((m) => m.id === id)?.nome ?? "—";
+
   main.innerHTML = `
     <div class="titulo-pagina">Administrativo</div>
+    <div class="card section" id="cardPagamentos">
+      <h2>📩 Pagamentos</h2>
+      <p class="muted small" style="margin-top:0">Escolha a mão de obra e envie a notinha de fechamento do mês. Ela aparece no painel da mão de obra.</p>
+      <div class="linha" style="grid-template-columns:2fr 1fr">
+        <div><label>Mão de obra</label><select id="pagMo"><option value="">Selecione…</option>
+          ${maos.filter((m) => m.ativo || m.id === pre.moId).map((m) => `<option value="${m.id}" ${m.id === pre.moId ? "selected" : ""}>${esc(m.nome)}</option>`).join("")}</select></div>
+        <div><label>Mês</label><input type="month" id="pagMes" value="${mesPag}"></div>
+      </div>
+      <div id="pagPrevia"></div>
+    </div>
+
     <div class="grid-admin">
       <div class="card">
         <h2>Calculadora</h2>
@@ -502,27 +832,38 @@ async function renderAdmin() {
         </div>
       </div>
 
-      <div class="card">
-        <h2>Backup</h2>
-        <p class="muted small">Todo dia o Google Planilhas faz uma cópia automática de tudo. Aqui você abre a planilha ou faz um backup na hora.</p>
-        <div class="acoes" style="margin:.2rem 0 1rem">
-          <button class="btn" id="btnAbrirPlanilha" ${conf.link_planilha ? "" : "disabled"}>📊 Abrir planilha de backup</button>
-          <button class="btn acento" id="btnBackupAgora" ${conf.link_app_backup ? "" : "disabled"}>⟳ Fazer backup agora</button>
-          <button class="btn sec" id="btnBaixar">⬇ Baixar cópia (Excel)</button>
+      <div>
+        <div class="card section">
+          <h2>Backup</h2>
+          <p class="muted small">Todo dia o Google Planilhas faz uma cópia automática de tudo. Aqui você abre a planilha ou faz um backup na hora.</p>
+          <div class="acoes" style="margin:.2rem 0 1rem">
+            <button class="btn" id="btnAbrirPlanilha" ${conf.link_planilha ? "" : "disabled"}>📊 Abrir planilha de backup</button>
+            <button class="btn acento" id="btnBackupAgora" ${conf.link_app_backup ? "" : "disabled"}>⟳ Fazer backup agora</button>
+            <button class="btn sec" id="btnBaixar">⬇ Baixar cópia (Excel)</button>
+          </div>
+          <details ${conf.link_planilha ? "" : "open"}>
+            <summary class="small" style="cursor:pointer;margin-bottom:.6rem">Configurar links do backup</summary>
+            <form id="formBackup">
+              <div class="linha"><div><label>Link da planilha de backup (Google Planilhas)</label><input name="link_planilha" value="${esc(conf.link_planilha)}" placeholder="https://docs.google.com/spreadsheets/…"></div></div>
+              <div class="linha"><div><label>Link do App da Web do backup</label><input name="link_app_backup" value="${esc(conf.link_app_backup)}" placeholder="https://script.google.com/macros/s/…/exec"></div></div>
+              <div class="linha"><div><label>Código secreto do backup</label><input name="codigo_backup" type="password" value="${esc(conf.codigo_backup)}" autocomplete="off"></div></div>
+              <button class="btn" type="submit">Salvar links</button>
+            </form>
+          </details>
         </div>
-        <details ${conf.link_planilha ? "" : "open"}>
-          <summary class="small" style="cursor:pointer;margin-bottom:.6rem">Configurar links do backup</summary>
-          <form id="formBackup">
-            <div class="linha"><div><label>Link da planilha de backup (Google Planilhas)</label><input name="link_planilha" value="${esc(conf.link_planilha)}" placeholder="https://docs.google.com/spreadsheets/…"></div></div>
-            <div class="linha"><div><label>Link do App da Web do backup (opcional)</label><input name="link_app_backup" value="${esc(conf.link_app_backup)}" placeholder="https://script.google.com/macros/s/…/exec"></div></div>
-            <div class="linha"><div><label>Código secreto do backup</label><input name="codigo_backup" type="password" value="${esc(conf.codigo_backup)}" autocomplete="off"></div></div>
-            <button class="btn" type="submit">Salvar links</button>
-          </form>
-        </details>
+        <div class="card">
+          <h2>Notas enviadas</h2>
+          ${notas.length ? `<ul class="lista-final">${notas.map((n) => `<li>
+            <span>${dataBR(n.enviada_em)} – <strong>${esc(nomeMo(n.mao_de_obra_id))}</strong> – ${nomeMes(n.mes).split(" ")[0].toLowerCase()}<br>
+              <span class="small muted">${inteiro(n.quantidade)} peças · ${moeda(n.valor_total)}</span></span>
+            ${n.lida_em ? selo("pronto", "Lida") : selo("aberto", "Não lida")}</li>`).join("")}</ul>`
+            : `<p class="muted small">Nenhuma nota enviada ainda.</p>`}
+        </div>
       </div>
     </div>`;
 
   ligarCalculadora();
+  ligarPagamentos(maos);
 
   $("#btnAbrirPlanilha").onclick = () => window.open(conf.link_planilha, "_blank", "noopener");
   $("#btnBackupAgora").onclick = () => {
@@ -541,6 +882,55 @@ async function renderAdmin() {
     try { await q(sb.from("configuracoes").upsert(linhas)); aviso("Links salvos!"); renderAdmin(); }
     catch (err) { aviso(err.message, true); }
   });
+  if (pre.moId) $("#cardPagamentos").scrollIntoView({ behavior: "smooth" });
+}
+
+// Monta a prévia da nota e envia
+function ligarPagamentos(maos) {
+  const selMo = $("#pagMo"), selMes = $("#pagMes"), area = $("#pagPrevia");
+  const textoWhats = (mo, mes, linhas, total, qtd, msg) =>
+    `Olá, ${mo.nome.split(" ")[0]}! Segue o fechamento de ${nomeMes(mes).toLowerCase()} — ${NOME_FABRICA}:\n\n` +
+    linhas.map((i) => `• ${i.produto_nome} – ${i.servico_nome}: ${inteiro(i.quantidade)} pç × ${moeda(i.valor_unitario)} = ${moeda(i.valor)}`).join("\n") +
+    `\n\nTotal: ${inteiro(qtd)} peças — *${moeda(total)}*` + (msg ? `\n\n${msg}` : "") +
+    `\n\nVocê também pode ver esta nota no seu painel.`;
+
+  const carregar = async () => {
+    const mo = maos.find((m) => m.id === selMo.value);
+    if (!mo) { area.innerHTML = ""; return; }
+    const mes = `${selMes.value || inicioMes().slice(0, 7)}-01`;
+    area.innerHTML = `<p class="muted small">Carregando…</p>`;
+    let linhas;
+    try { linhas = await q(sb.from("v_fechamento").select("*").eq("mao_de_obra_id", mo.id).eq("mes", mes).order("produto_nome").order("servico_nome")); }
+    catch (e) { area.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; return; }
+    if (!linhas.length) { area.innerHTML = `<div class="alerta">${esc(mo.nome)} não tem nada finalizado em ${nomeMes(mes).toLowerCase()}.</div>`; return; }
+    const total = soma(linhas, "valor"), qtd = soma(linhas, "quantidade");
+    area.innerHTML = `
+      <div class="nota-previa">
+        <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Fechamento de ${nomeMes(mes).toLowerCase()}</span></div>
+        <div class="small" style="margin-bottom:.4rem">Para: <strong>${esc(mo.nome)}</strong>${mo.pix ? ` · PIX: ${esc(mo.pix)}` : ""}</div>
+        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
+          <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)} · ${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+          <tfoot><tr><td>Total</td><td class="right num">${inteiro(qtd)}</td><td></td><td class="right num">${moeda(total)}</td></tr></tfoot></table>
+      </div>
+      <div class="linha" style="margin-top:.7rem"><div><label>Mensagem (opcional)</label><input id="pagMsg" placeholder="Ex.: O PIX cai até sexta-feira."></div></div>
+      <label class="check-whats ${mo.whatsapp ? "" : "desab"}"><input type="checkbox" id="pagWhats" ${mo.whatsapp ? "" : "disabled"}>
+        Também enviar pelo WhatsApp ${mo.whatsapp ? `(${esc(mo.whatsapp)})` : "— cadastre o WhatsApp dela para usar"}</label>
+      <button class="btn acento bloco" id="pagEnviar">📩 Enviar nota para ${esc(mo.nome.split(" ")[0])}</button>`;
+
+    $("#pagEnviar").onclick = async (ev) => {
+      const btn = ev.currentTarget, whats = $("#pagWhats").checked, msg = $("#pagMsg").value.trim();
+      const janela = whats ? window.open("about:blank", "_blank") : null; // abre já, para o navegador não bloquear
+      btn.disabled = true;
+      try {
+        await rpc("enviar_nota", { p_mao_de_obra: mo.id, p_mes: mes, p_mensagem: msg || null });
+        if (janela) janela.location.href = `${linkWhats(mo.whatsapp)}?text=${encodeURIComponent(textoWhats(mo, mes, linhas, total, qtd, msg))}`;
+        aviso(whats ? "Nota enviada! Confira o WhatsApp que abriu." : "Nota enviada para o painel dela!");
+        renderAdmin({ moId: mo.id, mes: mes.slice(0, 7) });
+      } catch (e) { janela?.close(); aviso(e.message, true); btn.disabled = false; }
+    };
+  };
+  selMo.onchange = selMes.onchange = carregar;
+  carregar();
 }
 
 // Calculadora comum
@@ -582,9 +972,10 @@ function ligarCalculadora() {
 // Cópia local em planilha (CSV que abre no Excel)
 async function baixarCopia() {
   try {
-    const [lotes, entregas] = await Promise.all([
+    const [lotes, entregas, entradas] = await Promise.all([
       q(sb.from("v_lotes").select("*").order("id")),
       q(sb.from("v_entregas").select("*").order("id")),
+      q(sb.from("v_entradas").select("*").order("id")),
     ]);
     const n = (v) => String(Number(v || 0).toFixed(2)).replace(".", ",");
     const csv = (cab, linhas) => "﻿" + [cab, ...linhas].map((l) => l.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
@@ -600,7 +991,10 @@ async function baixarCopia() {
     setTimeout(() => baixar(`entregas-${hoje}.csv`, csv(
       ["Data", "Lote", "Mão de obra", "Produto", "Serviço", "Peças", "Tipo", "Valor", "Mês"],
       entregas.map((e) => [dataHoraBR(e.entregue_em), e.lote_id, e.mao_de_obra_nome, e.produto_nome, e.servico_nome, e.quantidade, e.tipo === "pronto" ? "Lote pronto" : "Parcial", n(e.valor), String(e.mes_ref).slice(0, 7)]))), 400);
-    aviso("Cópia baixada (2 arquivos).");
+    setTimeout(() => baixar(`entradas-empresas-${hoje}.csv`, csv(
+      ["Data", "Empresa", "Produto", "Serviço", "Peças", "Empresa paga R$/peça", "Total", "Observações"],
+      entradas.map((e) => [dataBR(e.data), e.empresa_nome, e.produto_nome, e.servico_nome, e.quantidade, n(e.valor_unitario), n(e.valor_total), e.observacoes]))), 800);
+    aviso("Cópia baixada (3 arquivos).");
   } catch (e) { aviso(e.message, true); }
 }
 

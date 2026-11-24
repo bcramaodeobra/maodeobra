@@ -116,7 +116,7 @@ tr:last-child td { border-bottom: 0; }
 tfoot td { font-weight: 700; border-top: 2px solid var(--line); }
 
 /* ---------- Formulários ---------- */
-form .linha { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: .7rem; }
+.linha { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: .7rem; }
 label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .2rem; font-weight: 500; }
 input, select, textarea {
   width: 100%; font: inherit; padding: .6rem .7rem; border: 1px solid #d6d1c9; border-radius: 9px; background: #fff; color: var(--text);
@@ -263,9 +263,11 @@ body.dono main { max-width: 1150px; }
 .selo.pronto { background: var(--ok-bg); color: var(--ok); }
 .selo.parcial { background: var(--info-bg); color: var(--primary-2); }
 
-.produto-card .servico-linha { display: grid; grid-template-columns: 1fr 130px auto; gap: .5rem; align-items: center; padding: .4rem 0; border-bottom: 1px dashed var(--line); }
+.produto-card .servico-linha { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr auto; gap: .5rem; align-items: center; padding: .4rem 0; border-bottom: 1px dashed var(--line); font-size: .92rem; }
+.produto-card .servico-linha.cab { font-size: .72rem; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); font-weight: 600; padding-bottom: .2rem; }
+.produto-card .servico-linha.cab span:last-child { width: 58px; }
 .produto-card .servico-linha:last-of-type { border-bottom: 0; }
-.produto-card .novo-servico { display: grid; grid-template-columns: 1fr 130px auto; gap: .5rem; margin-top: .6rem; }
+.produto-card .novo-servico { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto; gap: .45rem; margin-top: .6rem; }
 .produto-card .inativo { opacity: .5; }
 
 .calc { max-width: 320px; }
@@ -279,3 +281,34 @@ body.dono main { max-width: 1150px; }
 .calc .teclas .igual { background: var(--amarelo); border-color: var(--amarelo); }
 .calc .teclas .limpar { color: var(--bad); }
 .grid-admin { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; align-items: start; }
+.item-lote { border: 1px solid var(--line); border-radius: 10px; padding: .7rem .75rem .5rem; margin-bottom: .6rem; background: #fafbfd; }
+.item-lote .linha { margin-bottom: .5rem; }
+.item-sub { display: flex; justify-content: space-between; font-size: .85rem; color: var(--muted); }
+.item-sub .item-total { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.grid.cards-largos { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); }
+@media (max-width: 560px) { .grid.cards-largos { grid-template-columns: 1fr; } .produto-card .servico-linha { grid-template-columns: 1fr 1fr 1fr; } .produto-card .servico-linha > :nth-child(4) { display: none; } .produto-card .novo-servico { grid-template-columns: 1fr 1fr; } }
+.lucro-pos { color: var(--ok); font-weight: 700; }
+.lucro-neg { color: var(--bad); font-weight: 700; }
+.total.verde { background: var(--ok-bg); border-color: #bfe3cb; }
+.total.verde .v { color: var(--ok); }
+.mini-lote.entrada { border-left-color: var(--amarelo); }
+
+/* Fechamentos em cartões (nome em cima, valor embaixo) */
+.grade-fech { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1.4rem 1.2rem; margin: .8rem 0 1.5rem; }
+.cartao-fech { position: relative; background: none; border: 0; padding: 0; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font: inherit; transition: transform .08s ease; }
+.cartao-fech:hover { transform: translateY(-2px); }
+.cartao-fech .nome, .cartao-fech .valor { background: var(--primary); color: #fff; border-radius: 8px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(20,24,35,.14); }
+.cartao-fech .nome { min-height: 58px; font-weight: 700; font-size: 1.05rem; text-transform: uppercase; letter-spacing: .3px; padding: .4rem; text-align: center; }
+.cartao-fech .valor { min-height: 50px; font-size: 1.35rem; font-weight: 800; gap: .35rem; font-variant-numeric: tabular-nums; }
+.cartao-fech .valor b { color: #22e33f; }
+.cartao-fech.zerado .valor b { color: #c9d1de; }
+.cartao-fech .tag-pago { position: absolute; top: -9px; right: -6px; background: var(--amarelo); color: #1f2430; font-size: .68rem; font-weight: 800; padding: .15rem .45rem; border-radius: 99px; letter-spacing: .4px; }
+
+/* Nota de pagamento */
+.nota-previa { border: 1px dashed #c7cfdc; border-radius: 12px; padding: .8rem .9rem; background: #fbfcfe; }
+.nota-previa .nota-topo { display: flex; justify-content: space-between; gap: .5rem; flex-wrap: wrap; border-bottom: 2px solid var(--primary); padding-bottom: .35rem; margin-bottom: .45rem; }
+.check-whats { display: flex; gap: .5rem; align-items: center; margin: .2rem 0 .8rem; font-size: .9rem; color: var(--text); }
+.check-whats input { width: auto; }
+.check-whats.desab { color: var(--muted); }
+.nota-item { border: 1px solid var(--line); border-radius: 10px; padding: .7rem .85rem; margin-bottom: .55rem; background: #fff; display: flex; justify-content: space-between; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.nota-item.nao-lida { border-color: #f2d978; background: #fffbea; }

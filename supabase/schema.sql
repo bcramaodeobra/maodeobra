@@ -1,7 +1,7 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 2)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 3)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
---  Pode ser rodado de novo sem apagar dados.
+--  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -48,6 +48,8 @@ create table if not exists public.servicos (
   criado_em       timestamptz not null default now()
 );
 create index if not exists servicos_produto_idx on public.servicos (produto_id);
+-- valor_unitario = o que o dono PAGA à mão de obra; valor_cliente = o que a EMPRESA paga ao dono
+alter table public.servicos add column if not exists valor_cliente numeric(10,2) check (valor_cliente >= 0);
 
 -- ---------------------------------------------------------------------
 -- 3. LOTES (um produto + um serviço enviado para uma mão de obra)
@@ -100,6 +102,48 @@ create table if not exists public.configuracoes (
   chave  text primary key,
   valor  text
 );
+
+
+-- ---------------------------------------------------------------------
+-- 6b. MINHA MÃO DE OBRA — empresas e entradas de serviço
+-- ---------------------------------------------------------------------
+create table if not exists public.empresas (
+  id         bigint generated always as identity primary key,
+  nome       text not null,
+  whatsapp   text,
+  ativo      boolean not null default true,
+  criado_em  timestamptz not null default now()
+);
+
+create table if not exists public.entradas (
+  id              bigint generated always as identity primary key,
+  empresa_id      bigint not null references public.empresas(id),
+  produto_id      bigint not null references public.produtos(id),
+  servico_id      bigint not null references public.servicos(id),
+  quantidade      integer not null check (quantidade > 0),
+  valor_unitario  numeric(10,2) not null check (valor_unitario >= 0),  -- o que a empresa paga por peça
+  valor_total     numeric(12,2) generated always as (quantidade * valor_unitario) stored,
+  data            date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  observacoes     text,
+  criado_em       timestamptz not null default now()
+);
+create index if not exists entradas_data_idx on public.entradas (data);
+
+-- ---------------------------------------------------------------------
+-- 6c. NOTAS DE PAGAMENTO (enviadas pelo dono para a mão de obra)
+-- ---------------------------------------------------------------------
+create table if not exists public.notas (
+  id              bigint generated always as identity primary key,
+  mao_de_obra_id  uuid not null references public.perfis(id),
+  mes             date not null check (extract(day from mes) = 1),
+  quantidade      integer not null default 0,
+  valor_total     numeric(12,2) not null default 0,
+  itens           jsonb not null default '[]'::jsonb,
+  mensagem        text,
+  enviada_em      timestamptz not null default now(),
+  lida_em         timestamptz
+);
+create index if not exists notas_mo_idx on public.notas (mao_de_obra_id, enviada_em desc);
 
 -- =====================================================================
 -- 7. VISÕES (cálculos prontos)
@@ -161,6 +205,31 @@ select
 from public.v_entregas ve
 left join public.fechamentos f on f.mao_de_obra_id = ve.mao_de_obra_id and f.mes = ve.mes_ref
 group by ve.mao_de_obra_id, ve.mao_de_obra_nome, ve.mes_ref, f.id, f.pago_em;
+
+
+-- Entradas com nomes
+create or replace view public.v_entradas with (security_invoker = true) as
+select en.*, em.nome as empresa_nome, p.nome as produto_nome, s.nome as servico_nome,
+       s.valor_unitario as valor_mao_de_obra,
+       date_trunc('month', en.data)::date as mes_ref
+from public.entradas en
+join public.empresas em on em.id = en.empresa_id
+join public.produtos p  on p.id = en.produto_id
+join public.servicos s  on s.id = en.servico_id;
+
+-- Quanto entrou x quanto já foi distribuído, por produto + serviço (total geral)
+create or replace view public.v_distribuicao with (security_invoker = true) as
+with ent as (select servico_id, sum(quantidade) q from public.entradas group by servico_id),
+     dis as (select servico_id, sum(quantidade) q from public.lotes where status <> 'cancelado' group by servico_id)
+select s.id as servico_id, p.nome as produto_nome, s.nome as servico_nome,
+       coalesce(ent.q, 0) as entrou,
+       coalesce(dis.q, 0) as distribuido,
+       coalesce(ent.q, 0) - coalesce(dis.q, 0) as falta
+from public.servicos s
+join public.produtos p on p.id = s.produto_id
+left join ent on ent.servico_id = s.id
+left join dis on dis.servico_id = s.id
+where coalesce(ent.q, 0) > 0 or coalesce(dis.q, 0) > 0;
 
 -- =====================================================================
 -- 8. REGRAS (gatilhos)
@@ -302,6 +371,33 @@ begin
   delete from fechamentos where id = p_fechamento;
 end $$;
 
+
+-- Nota de pagamento do mês (aviso para a mão de obra; não marca como pago)
+create or replace function public.enviar_nota(p_mao_de_obra uuid, p_mes date, p_mensagem text default null)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare v_mes date := date_trunc('month', p_mes)::date; v_itens jsonb; v_qtd int; v_valor numeric; v_id bigint;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono pode enviar notas.'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('produto', produto_nome, 'servico', servico_nome,
+           'quantidade', quantidade, 'valor_unitario', valor_unitario, 'valor', valor)
+           order by produto_nome, servico_nome), '[]'::jsonb),
+         coalesce(sum(quantidade), 0), coalesce(sum(valor), 0)
+    into v_itens, v_qtd, v_valor
+    from v_fechamento where mao_de_obra_id = p_mao_de_obra and mes = v_mes;
+  if v_qtd = 0 then raise exception 'Esta mão de obra não tem nada finalizado neste mês.'; end if;
+  insert into notas (mao_de_obra_id, mes, quantidade, valor_total, itens, mensagem)
+  values (p_mao_de_obra, v_mes, v_qtd, v_valor, v_itens, nullif(trim(p_mensagem), ''))
+  returning id into v_id;
+  return v_id;
+end $$;
+
+-- A mão de obra marca a nota como lida
+create or replace function public.marcar_nota_lida(p_nota bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update notas set lida_em = coalesce(lida_em, now()) where id = p_nota and mao_de_obra_id = auth.uid();
+end $$;
+
 -- =====================================================================
 -- 10. SEGURANÇA (RLS) — cada mão de obra só vê o que é dela
 -- =====================================================================
@@ -345,6 +441,19 @@ create policy fech_mo on public.fechamentos for select to authenticated using (m
 
 drop policy if exists conf_dono on public.configuracoes;
 create policy conf_dono on public.configuracoes for all to authenticated using (eh_dono()) with check (eh_dono());
+
+alter table public.empresas      enable row level security;
+alter table public.entradas      enable row level security;
+alter table public.notas         enable row level security;
+
+drop policy if exists empresas_dono on public.empresas;
+create policy empresas_dono on public.empresas for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists entradas_dono on public.entradas;
+create policy entradas_dono on public.entradas for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists notas_dono on public.notas;
+create policy notas_dono on public.notas for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists notas_mo on public.notas;
+create policy notas_mo on public.notas for select to authenticated using (mao_de_obra_id = auth.uid());
 
 -- =====================================================================
 -- 11. PERMISSÕES DE ACESSO (projetos novos do Supabase não liberam sozinhos;

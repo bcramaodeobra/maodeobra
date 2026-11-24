@@ -1,6 +1,6 @@
 // Painel da mão de obra — versão provisória (só acompanhamento)
 import {
-  sb, exigirPapel, sair, modalTrocarSenha, q,
+  sb, exigirPapel, sair, modalTrocarSenha, q, rpc, abrirModal,
   moeda, inteiro, dataBR, isoLocal, inicioSemana, inicioMes, nomeMes,
   selo, esc, $, $$,
 } from "./comum.js";
@@ -38,12 +38,13 @@ fundo.onclick = fecharLateral;
 // ---------- Dados ----------
 async function render() {
   const mes = inicioMes();
-  let abertos, entregasMes, fechamentos;
+  let abertos, entregasMes, fechamentos, notas;
   try {
-    [abertos, entregasMes, fechamentos] = await Promise.all([
+    [abertos, entregasMes, fechamentos, notas] = await Promise.all([
       q(sb.from("v_lotes").select("*").eq("status", "aberto").order("enviado_em")),
       q(sb.from("v_entregas").select("*").eq("mes_ref", mes).order("entregue_em", { ascending: false })),
       q(sb.from("fechamentos").select("*").order("mes", { ascending: false }).limit(6)),
+      q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(12)),
     ]);
   } catch (e) { main.innerHTML = `<div class="card vazio">Erro ao carregar: ${esc(e.message)}</div>`; return; }
 
@@ -78,6 +79,11 @@ async function render() {
   main.innerHTML = `
     <div class="section-head"><h1>Olá, ${esc(perfil.nome.split(" ")[0])}</h1>
       <button class="btn sec peq" id="btnResumo">📊 Meu resumo</button></div>
+    ${notas.length ? `<div class="section"><h2>📩 Notas de pagamento ${notas.some((n) => !n.lida_em) ? `<span class="selo aberto">${notas.filter((n) => !n.lida_em).length} nova(s)</span>` : ""}</h2>
+      ${notas.slice(0, 4).map((n) => `<div class="nota-item ${n.lida_em ? "" : "nao-lida"}">
+        <span><strong>Fechamento de ${nomeMes(n.mes).toLowerCase()}</strong><br><span class="small muted">Enviada em ${dataBR(n.enviada_em)} · ${inteiro(n.quantidade)} peças</span></span>
+        <span style="display:flex;gap:.6rem;align-items:center"><strong class="num">${moeda(n.valor_total)}</strong><button class="btn ${n.lida_em ? "sec" : ""} peq" data-nota="${n.id}">Ver nota</button></span>
+      </div>`).join("")}</div>` : ""}
     <div class="totais">
       <div class="total amarelo"><div class="r">Em aberto</div><div class="v">${moeda(valorAberto)}</div></div>
       <div class="total"><div class="r">Finalizado no mês</div><div class="v">${moeda(valorFinal)}</div></div>
@@ -100,6 +106,24 @@ async function render() {
         : `<div class="card vazio">Nada finalizado neste mês ainda.</div>`}
     </div>`;
   $("#btnResumo").onclick = abrirLateral;
+  $$("[data-nota]", main).forEach((b) => (b.onclick = () => verNota(notas.find((n) => n.id == b.dataset.nota))));
+}
+
+function verNota(n) {
+  const itens = Array.isArray(n.itens) ? n.itens : [];
+  abrirModal({
+    titulo: `Fechamento de ${nomeMes(n.mes).toLowerCase()}`,
+    conteudo: `
+      <div class="nota-previa">
+        <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Enviada em ${dataBR(n.enviada_em)}</span></div>
+        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
+          <tbody>${itens.map((i) => `<tr><td>${esc(i.produto)} · ${esc(i.servico)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+          <tfoot><tr><td>Total</td><td class="right num">${inteiro(n.quantidade)}</td><td></td><td class="right num">${moeda(n.valor_total)}</td></tr></tfoot></table>
+      </div>
+      ${n.mensagem ? `<p style="margin:.8rem 0 0"><strong>Mensagem:</strong> ${esc(n.mensagem)}</p>` : ""}
+      <button type="submit" class="btn bloco" style="margin-top:1rem">Fechar</button>`,
+  });
+  if (!n.lida_em) rpc("marcar_nota_lida", { p_nota: n.id }).then(() => { n.lida_em = new Date().toISOString(); render(); }).catch(() => {});
 }
 
 render();

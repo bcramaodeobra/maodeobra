@@ -182,13 +182,29 @@ function atualizarPlanilha_() {
     e.tipo === "pronto" ? "Lote pronto" : "Parcial", Number(e.valor), dataSimples_(e.mes_ref),
   ]));
 
-  // 5. Cadastros
+  // 5. Minha mão de obra — entradas das empresas
+  escreverAba_(ss, "Entradas (empresas)", [
+    ["Data", DATA], ["Empresa"], ["Produto"], ["Serviço"], ["Peças"], ["Empresa paga R$/peça", MOEDA], ["Total a receber", MOEDA],
+    ["Mão de obra R$/peça", MOEDA], ["Lucro estimado", MOEDA], ["Observações"],
+  ], (d.entradas || []).slice().reverse().map((e) => [
+    dataSimples_(e.data), e.empresa_nome, e.produto_nome, e.servico_nome, e.quantidade, Number(e.valor_unitario), Number(e.valor_total),
+    Number(e.valor_mao_de_obra), (Number(e.valor_unitario) - Number(e.valor_mao_de_obra)) * e.quantidade, e.observacoes || "",
+  ]));
+
+  // 6. Notas de pagamento enviadas
+  const nomeMaoNota = {}; d.maos_de_obra.forEach((m) => (nomeMaoNota[m.id] = m.nome));
+  escreverAba_(ss, "Notas enviadas", [["Enviada em", DATA_HORA], ["Mão de obra"], ["Mês", "mm/yyyy"], ["Peças"], ["Valor", MOEDA], ["Lida em", DATA_HORA], ["Mensagem"]],
+    (d.notas || []).slice().reverse().map((n) => [dataHora_(n.enviada_em), nomeMaoNota[n.mao_de_obra_id] || "", dataSimples_(n.mes), n.quantidade, Number(n.valor_total), dataHora_(n.lida_em), n.mensagem || ""]));
+
+  // 7. Cadastros
+  if ((d.empresas || []).length) escreverAba_(ss, "Empresas", [["Empresa"], ["WhatsApp"], ["Situação"]],
+    d.empresas.map((e) => [e.nome, e.whatsapp || "", e.ativo ? "Ativa" : "Inativa"]));
   escreverAba_(ss, "Mãos de obra", [["Nome"], ["Usuário"], ["WhatsApp"], ["Endereço"], ["Chave PIX"], ["Situação"], ["Cadastrado em", DATA_HORA]],
     maos.map((m) => [m.nome, m.usuario, m.whatsapp || "", m.endereco || "", m.pix || "", m.ativo ? "Ativo" : "Inativo", dataHora_(m.criado_em)]));
 
   const nomeProd = {}; d.produtos.forEach((p) => (nomeProd[p.id] = p.nome));
-  escreverAba_(ss, "Serviços e preços", [["Produto"], ["Serviço"], ["R$ por peça", MOEDA], ["Situação"]],
-    d.servicos.map((s) => [nomeProd[s.produto_id] || "", s.nome, Number(s.valor_unitario), s.ativo ? "Ativo" : "Inativo"])
+  escreverAba_(ss, "Serviços e preços", [["Produto"], ["Serviço"], ["Empresa paga R$/peça", MOEDA], ["Mão de obra R$/peça", MOEDA], ["Situação"]],
+    d.servicos.map((s) => [nomeProd[s.produto_id] || "", s.nome, s.valor_cliente == null ? "" : Number(s.valor_cliente), Number(s.valor_unitario), s.ativo ? "Ativo" : "Inativo"])
       .sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])));
 
   // Remove abas antigas/vazias
