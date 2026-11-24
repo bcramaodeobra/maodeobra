@@ -742,22 +742,22 @@ async function renderFechamentos() {
       </div>
     </div>
     <div class="totais">
-      <div class="total escuro"><div class="r">Finalizado no período</div><div class="v">${moeda(tot.total)}</div></div>
+      <div class="total escuro"><div class="r">Total a receber</div><div class="v">${moeda(tot.aberto + tot.total - tot.pago)}</div></div>
+      <div class="total amarelo"><div class="r">Em aberto com as mãos de obra</div><div class="v">${moeda(tot.aberto)}</div></div>
+      <div class="total"><div class="r">Finalizado no período</div><div class="v">${moeda(tot.total)}</div></div>
       <div class="total"><div class="r">Já pago</div><div class="v">${moeda(tot.pago)}</div></div>
-      <div class="total amarelo"><div class="r">Falta pagar</div><div class="v">${moeda(tot.total - tot.pago)}</div></div>
-      <div class="total"><div class="r">Em aberto com as mãos de obra</div><div class="v">${moeda(tot.aberto)}</div></div>
     </div>
     ${lista.length ? `<div class="grade-fech">${lista.map((m) => {
       const x = por[m.id] || { total: 0, pago: 0, aberto: 0 };
       const falta = x.total - x.pago;
-      return `<button class="cartao-fech ${x.total ? "" : "zerado"}" data-det="${m.id}">
+      const receber = x.aberto + falta;
+      return `<button class="cartao-fech ${receber ? "" : "zerado"}" data-det="${m.id}">
         <span class="nome">${esc(maiusc(m.nome))}<small>${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</small></span>
-        <span class="valor">R$ <b>${moeda(x.total).replace("R$", "").trim()}</b></span>
-        <span class="extra">${[x.total && !falta ? "✓ tudo pago" : x.pago ? `falta pagar ${moeda(falta)}` : "", x.aberto ? `em aberto ${moeda(x.aberto)}` : ""].filter(Boolean).join(" · ")}&nbsp;</span>
-        ${x.total && !falta ? `<span class="tag-pago">PAGO</span>` : ""}
+        <span class="valor">R$ <b>${moeda(receber).replace("R$", "").trim()}</b></span>
+        ${x.total && !falta && !x.aberto ? `<span class="tag-pago">PAGO</span>` : ""}
       </button>`;
     }).join("")}</div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}
-    <p class="muted small" style="text-align:center">Verde = já finalizado no período (entregas parciais + lotes prontos). "Em aberto" = lotes que ainda estão com ela.</p>`;
+    <p class="muted small" style="text-align:center">Valor em verde = lotes em aberto + o que ela já finalizou no período e ainda não foi pago. Clique no nome para ver o detalhe.</p>`;
 
   $$("[data-tipo]", main).forEach((b) => (b.onclick = () => { tipoFech = b.dataset.tipo; renderFechamentos(); }));
   $("#perAnt").onclick = () => { refFech = periodoAnterior(p).inicio; renderFechamentos(); };
