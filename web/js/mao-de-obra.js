@@ -216,8 +216,8 @@ function abaPerfil(d, per, freq) {
     </div>
     <div id="areaInstalar" style="margin:.8rem 0"></div>
     <div class="menu-mais">
-      <button type="button" id="btnSenha"><i>🔑</i>Trocar minha senha</button>
-      <button type="button" id="btnSair" class="sair"><i>⏻</i>Sair</button>
+      <button type="button" id="btnSenha"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Trocar minha senha</span><svg class="seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+      <button type="button" id="btnSair" class="sair"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span>Sair</span></button>
     </div>`;
   botaoInstalar($("#areaInstalar"));
   $("#btnSenha").onclick = () => modalTrocarSenha(perfil.usuario);

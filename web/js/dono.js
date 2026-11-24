@@ -21,9 +21,9 @@ function modalMinhaConta() {
   const m = abrirModal({
     titulo: "Minha conta",
     conteudo: `<p class="muted small" style="margin-top:0">Você entra com o usuário <strong>${esc(perfil.usuario)}</strong>.</p>
-      <div class="acoes" style="flex-direction:column;align-items:stretch">
-        <button type="button" class="btn" id="contaUsuario">✏️ Alterar meu usuário</button>
-        <button type="button" class="btn sec" id="contaSenha">🔑 Trocar minha senha</button>
+      <div class="menu-mais">
+        <button type="button" id="contaUsuario">${icone("usuario")}<span>Alterar meu usuário</span>${seta}</button>
+        <button type="button" id="contaSenha">${icone("senha")}<span>Trocar minha senha</span>${seta}</button>
       </div>`,
   });
   $("#contaSenha", m.form).onclick = () => { m.fechar(); modalTrocarSenha(perfil.usuario); };
@@ -66,6 +66,21 @@ const resumoQtd = (lista) => {
 const TIPOS = { externa: "Mão de obra externa", interna: "Mão de obra interna", fixos: "Funcionários fixos" };
 const FORMAS = { producao: "Por produção", hora: "Por hora" };
 const formaTxt = (m) => (porHora(m) ? `Por hora${valorHoraDe(m) != null ? ` · ${moeda(valorHoraDe(m))}` : ""}` : "Por produção");
+
+const ICONES = {
+  maos: '<path d="M16 19c0-3-2.5-5-6-5s-6 2-6 5"/><circle cx="10" cy="8" r="3.5"/><path d="M20 19c0-2.4-1.5-4.2-4-4.8M15.5 4.6a3.5 3.5 0 0 1 0 6.8"/>',
+  servicos: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
+  admin: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  conta: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+  sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  externa: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  interna: '<path d="M2 21V9l6 4V9l6 4V5h8v16z"/><path d="M6 17h2M11 17h2M16 17h2"/>',
+  fixos: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2.2"/><path d="M5.8 16c.6-1.5 1.8-2.2 3.2-2.2s2.6.7 3.2 2.2M15 10h3M15 13h3"/>',
+  usuario: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  senha: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+};
+const icone = (k) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONES[k]}</svg>`;
+const seta = '<svg class="seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
 
 const linkWhats = (n) => (n ? `https://wa.me/55${String(n).replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "")}` : "");
 
@@ -113,16 +128,16 @@ $("#fabLote").onclick = () => modalNovoLote();
 
 function menuMais() {
   const itens = [
-    ["maos", "👥", "Cadastro de mão de obra"],
-    ["servicos", "🧵", "Produtos e serviços"],
-    ["admin", "⚙️", "Administrativo"],
+    ["maos", "maos", "Cadastro de mão de obra"],
+    ["servicos", "servicos", "Produtos e serviços"],
+    ["admin", "admin", "Administrativo"],
   ];
   const m = abrirModal({
     titulo: "Mais opções",
     conteudo: `<div class="menu-mais">
-      ${itens.map(([k, ic, t]) => `<button type="button" data-ir="${k}"><i>${ic}</i>${t}</button>`).join("")}
-      <button type="button" id="maisConta"><i>🔑</i>Minha conta (usuário e senha)</button>
-      <button type="button" id="maisSair" class="sair"><i>⏻</i>Sair</button>
+      ${itens.map(([k, ic, t]) => `<button type="button" data-ir="${k}">${icone(ic)}<span>${t}</span>${seta}</button>`).join("")}
+      <button type="button" id="maisConta">${icone("conta")}<span>Minha conta</span>${seta}</button>
+      <button type="button" id="maisSair" class="sair">${icone("sair")}<span>Sair</span></button>
     </div>`,
   });
   $$("[data-ir]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); irPara(b.dataset.ir); }));
@@ -932,7 +947,7 @@ async function renderMaos() {
     const m = abrirModal({
       titulo: "Novo cadastro",
       conteudo: `<p class="muted small" style="margin-top:0">Que tipo de pessoa você vai cadastrar?</p>
-        <div class="menu-mais">${(ops.length ? ops : ["externa", "interna", "fixos"]).map((k) => `<button type="button" data-novo="${k}"><i>${k === "externa" ? "🏠" : k === "interna" ? "🏭" : "🪪"}</i>${TIPOS[k]}</button>`).join("")}</div>`,
+        <div class="menu-mais">${(ops.length ? ops : ["externa", "interna", "fixos"]).map((k) => `<button type="button" data-novo="${k}">${icone(k)}<span>${TIPOS[k]}</span>${seta}</button>`).join("")}</div>`,
     });
     $$("[data-novo]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); modalNovaMo(b.dataset.novo); }));
   };
