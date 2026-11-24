@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 4)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 5)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -190,6 +190,19 @@ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- 6e. AVISOS da mão de obra ("terminei este lote")
+-- ---------------------------------------------------------------------
+create table if not exists public.avisos (
+  id              bigint generated always as identity primary key,
+  lote_id         bigint not null references public.lotes(id) on delete cascade,
+  mao_de_obra_id  uuid not null references public.perfis(id),
+  mensagem        text,
+  criado_em       timestamptz not null default now(),
+  visto_em        timestamptz
+);
+create index if not exists avisos_pend_idx on public.avisos (lote_id) where visto_em is null;
+
 -- =====================================================================
 -- 7. VISÕES (cálculos prontos) — recriadas a cada atualização
 -- =====================================================================
@@ -207,7 +220,9 @@ select
   coalesce(e.entregue, 0) * l.valor_unitario                 as valor_entregue,
   case when l.status = 'aberto'
        then greatest(l.quantidade - coalesce(e.entregue, 0), 0) * l.valor_unitario
-       else 0 end                                            as valor_aberto
+       else 0 end                                            as valor_aberto,
+  (select max(a.criado_em) from public.avisos a where a.lote_id = l.id and a.visto_em is null) as aviso_em,
+  (select a.mensagem from public.avisos a where a.lote_id = l.id and a.visto_em is null order by a.criado_em desc limit 1) as aviso_mensagem
 from public.lotes l
 join public.produtos p on p.id = l.produto_id
 join public.servicos s on s.id = l.servico_id
@@ -312,6 +327,7 @@ begin
   if v_ent >= v_qtd then
     update lotes set status = 'pronto', finalizado_em = coalesce(finalizado_em, now())
      where id = v_lote and status = 'aberto';
+    update avisos set visto_em = now() where lote_id = v_lote and visto_em is null;
   else
     update lotes set status = 'aberto', finalizado_em = null
      where id = v_lote and status = 'pronto';
@@ -377,6 +393,7 @@ begin
     insert into entregas (lote_id, quantidade, tipo) values (p_lote, v_falta, 'pronto');
   end if;
   update lotes set status = 'pronto', finalizado_em = coalesce(finalizado_em, now()) where id = p_lote;
+  update avisos set visto_em = now() where lote_id = p_lote and visto_em is null;
 end $$;
 
 -- Desfazer uma entrega lançada por engano
@@ -455,6 +472,37 @@ begin
   return v_id;
 end $$;
 
+-- A mão de obra avisa que terminou um lote (o dono confere e clica em LOTE PRONTO)
+create or replace function public.avisar_terminei(p_lote bigint, p_mensagem text default null)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare v_id bigint;
+begin
+  if not exists (select 1 from lotes where id = p_lote and mao_de_obra_id = auth.uid() and status = 'aberto') then
+    raise exception 'Lote não encontrado ou já finalizado.';
+  end if;
+  if exists (select 1 from avisos where lote_id = p_lote and visto_em is null) then
+    raise exception 'Você já avisou que terminou este lote. Aguarde a conferência.';
+  end if;
+  insert into avisos (lote_id, mao_de_obra_id, mensagem)
+  values (p_lote, auth.uid(), nullif(trim(p_mensagem), '')) returning id into v_id;
+  return v_id;
+end $$;
+
+-- A mão de obra cancela o próprio aviso (clicou sem querer)
+create or replace function public.cancelar_aviso(p_lote bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  delete from avisos where lote_id = p_lote and mao_de_obra_id = auth.uid() and visto_em is null;
+end $$;
+
+-- O dono dispensa um aviso sem finalizar o lote
+create or replace function public.dispensar_aviso(p_lote bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono() then raise exception 'Apenas o dono.'; end if;
+  update avisos set visto_em = now() where lote_id = p_lote and visto_em is null;
+end $$;
+
 -- A mão de obra marca a nota como lida
 create or replace function public.marcar_nota_lida(p_nota bigint)
 returns void language plpgsql security definer set search_path = public as $$
@@ -514,6 +562,12 @@ drop policy if exists empresas_dono on public.empresas;
 create policy empresas_dono on public.empresas for all to authenticated using (eh_dono()) with check (eh_dono());
 drop policy if exists entradas_dono on public.entradas;
 create policy entradas_dono on public.entradas for all to authenticated using (eh_dono()) with check (eh_dono());
+alter table public.avisos        enable row level security;
+drop policy if exists avisos_dono on public.avisos;
+create policy avisos_dono on public.avisos for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists avisos_mo on public.avisos;
+create policy avisos_mo on public.avisos for select to authenticated using (mao_de_obra_id = auth.uid());
+
 drop policy if exists notas_dono on public.notas;
 create policy notas_dono on public.notas for all to authenticated using (eh_dono()) with check (eh_dono());
 drop policy if exists notas_mo on public.notas;
