@@ -1471,6 +1471,72 @@ function ligarAcessos(maos) {
   });
 }
 
+// Desenha a nota de fechamento como imagem (PNG) para mandar no WhatsApp
+async function imagemNota(mo, per, linhas, total, qtd, msg) {
+  try { await document.fonts?.ready; } catch { /* segue com a fonte do sistema */ }
+  const W = 1080, P = 64, F = "Inter, 'Segoe UI', Roboto, Arial, sans-serif", FT = "Manrope, Inter, 'Segoe UI', Arial, sans-serif";
+  const c = document.createElement("canvas"), x = c.getContext("2d");
+  const quebrar = (texto, fonte, larg) => {
+    x.font = fonte; const pal = String(texto).split(" "); const l = []; let at = "";
+    pal.forEach((p) => { const t = at ? `${at} ${p}` : p; if (x.measureText(t).width > larg && at) { l.push(at); at = p; } else at = t; });
+    if (at) l.push(at); return l;
+  };
+  // mede a altura antes de desenhar
+  const fNome = `600 34px ${F}`, fSub = `400 28px ${F}`;
+  const itens = linhas.map((i) => ({ i, l: quebrar(nomeItem(i), fNome, W - 2 * P - 300) }));
+  const msgL = msg ? quebrar(msg, `400 30px ${F}`, W - 2 * P - 48) : [];
+  let H = 300 + 120 + itens.reduce((a, it) => a + 40 * it.l.length + 66, 0) + 214 + (msgL.length ? 70 + msgL.length * 42 : 0) + 110;
+  c.width = W; c.height = H;
+  x.textBaseline = "alphabetic";
+  // fundo
+  x.fillStyle = "#f3f5f9"; x.fillRect(0, 0, W, H);
+  // cabeçalho
+  x.fillStyle = "#172238"; x.fillRect(0, 0, W, 260);
+  x.fillStyle = "#f5c518"; x.fillRect(0, 254, W, 6);
+  x.fillStyle = "#f5c518"; x.font = `700 26px ${F}`; x.fillText("FECHAMENTO", P, 92);
+  x.fillStyle = "#ffffff"; x.font = `800 52px ${FT}`; x.fillText(NOME_FABRICA, P, 158);
+  x.fillStyle = "#aeb8cb"; x.font = `500 30px ${F}`; x.fillText(per.rotulo, P, 210);
+  // para
+  let y = 320;
+  x.fillStyle = "#5b6478"; x.font = `500 26px ${F}`; x.fillText("PARA", P, y);
+  x.fillStyle = "#172238"; x.font = `700 40px ${FT}`; x.fillText(mo.nome, P, y + 50);
+  if (mo.pix) { x.fillStyle = "#5b6478"; x.font = `400 28px ${F}`; x.textAlign = "right"; x.fillText(`PIX: ${mo.pix}`, W - P, y + 48); x.textAlign = "left"; }
+  y += 100;
+  // cartão dos itens
+  const topoCard = y, altCard = itens.reduce((a, it) => a + 40 * it.l.length + 66, 0) + 16;
+  x.fillStyle = "#ffffff"; x.strokeStyle = "#e3e7ee"; x.lineWidth = 2;
+  x.beginPath(); x.roundRect(P - 16, topoCard, W - 2 * P + 32, altCard, 20); x.fill(); x.stroke();
+  y += 52;
+  itens.forEach(({ i, l }, n) => {
+    x.fillStyle = "#172238"; x.font = fNome;
+    l.forEach((t, k) => x.fillText(t, P + 12, y + k * 40));
+    x.textAlign = "right"; x.font = `700 34px ${F}`; x.fillText(moeda(i.valor), W - P - 12, y); x.textAlign = "left";
+    x.fillStyle = "#5b6478"; x.font = fSub;
+    x.fillText(`${qtdTxt(i)} × ${moeda(i.valor_unitario)}${unidade(i)}`, P + 12, y + 40 * (l.length - 1) + 40);
+    y += 40 * l.length + 66;
+    if (n < itens.length - 1) { x.fillStyle = "#e3e7ee"; x.fillRect(P + 12, y - 44, W - 2 * P - 24, 2); }
+  });
+  y = topoCard + altCard + 30;
+  // total
+  x.fillStyle = "#23324d"; x.beginPath(); x.roundRect(P - 16, y, W - 2 * P + 32, 140, 20); x.fill();
+  x.fillStyle = "#aeb8cb"; x.font = `600 26px ${F}`; x.fillText("TOTAL", P + 16, y + 56);
+  x.fillStyle = "#ffffff"; x.font = `500 28px ${F}`; x.fillText(qtd, P + 16, y + 102);
+  x.fillStyle = "#3ee05a"; x.font = `800 60px ${FT}`; x.textAlign = "right"; x.fillText(moeda(total), W - P - 16, y + 92); x.textAlign = "left";
+  y += 214;
+  // recado
+  if (msgL.length) {
+    x.fillStyle = "#fff8db"; x.strokeStyle = "#f2d978"; x.beginPath(); x.roundRect(P - 16, y - 40, W - 2 * P + 32, 40 + msgL.length * 42 + 30, 16); x.fill(); x.stroke();
+    x.fillStyle = "#6b5200"; x.font = `400 30px ${F}`; msgL.forEach((t, k) => x.fillText(t, P + 8, y + 14 + k * 42));
+    y += 70 + msgL.length * 42;
+  }
+  // rodapé
+  x.fillStyle = "#8a93a6"; x.font = `400 24px ${F}`; x.textAlign = "center";
+  x.fillText(`Gerado em ${dataHoraBR(new Date())} · também disponível no seu painel`, W / 2, H - 50);
+  const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+  const nome = `fechamento-${mo.nome.split(" ")[0].toLowerCase()}-${per.inicio}.png`;
+  return new File([blob], nome, { type: "image/png" });
+}
+
 // Monta a prévia da nota e envia
 function ligarPagamentos(maos, pre = {}) {
   const selMo = $("#pagMo"), selTipo = $("#pagTipo"), area = $("#pagPrevia");
@@ -1503,17 +1569,46 @@ function ligarPagamentos(maos, pre = {}) {
       </div>
       <div class="linha" style="margin-top:.7rem"><div><label>Mensagem (opcional)</label><input id="pagMsg" placeholder="Ex.: O PIX cai até sexta-feira."></div></div>
       <label class="check-whats ${mo.whatsapp ? "" : "desab"}"><input type="checkbox" id="pagWhats" ${mo.whatsapp ? "" : "disabled"}>
-        Também enviar pelo WhatsApp ${mo.whatsapp ? `(${esc(mo.whatsapp)})` : "— cadastre o WhatsApp dela para usar"}</label>
-      <button class="btn acento bloco" id="pagEnviar">📩 Enviar nota para ${esc(mo.nome.split(" ")[0])}</button>`;
+        Também enviar pelo WhatsApp ${mo.whatsapp ? `(${esc(mo.whatsapp)})` : "— cadastre o WhatsApp dela para usar"} — vai como imagem</label>
+      <div class="acoes" style="margin-top:0">
+        <button class="btn acento" id="pagEnviar" style="flex:1">Enviar nota para ${esc(mo.nome.split(" ")[0])}</button>
+        <button class="btn sec" id="pagImagem" type="button">Baixar imagem</button>
+      </div>`;
+
+    // a imagem fica pronta antes do clique (o celular só deixa compartilhar logo após o toque)
+    let arquivo = null;
+    const prepararImagem = async () => { arquivo = null; try { arquivo = await imagemNota(mo, per, linhas, total, qtd, $("#pagMsg").value.trim()); } catch (e) { console.error(e); } };
+    let tempo; $("#pagMsg").oninput = () => { clearTimeout(tempo); tempo = setTimeout(prepararImagem, 400); };
+    prepararImagem();
+    const baixar = (f) => { const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); };
+    $("#pagImagem").onclick = async () => { if (!arquivo) await prepararImagem(); if (arquivo) baixar(arquivo); };
 
     $("#pagEnviar").onclick = async (ev) => {
       const btn = ev.currentTarget, whats = $("#pagWhats").checked, msg = $("#pagMsg").value.trim();
-      const janela = whats ? window.open("about:blank", "_blank") : null; // abre já, para o navegador não bloquear
+      // Celular: abre "Compartilhar" com a imagem (escolha o WhatsApp e a pessoa)
+      const podeCompartilhar = whats && arquivo && navigator.canShare?.({ files: [arquivo] });
+      const compartilhar = podeCompartilhar ? navigator.share({ files: [arquivo], title: "Fechamento" }).then(() => true, () => false) : null;
+      // Computador: copia a imagem e abre o WhatsApp da pessoa para colar (Ctrl+V)
+      let copiou = null, janela = null;
+      if (whats && !podeCompartilhar) {
+        copiou = arquivo && window.ClipboardItem && navigator.clipboard?.write
+          ? navigator.clipboard.write([new ClipboardItem({ "image/png": arquivo })]).then(() => true, () => false) : Promise.resolve(false);
+        janela = window.open("about:blank", "_blank"); // abre já, para o navegador não bloquear
+      }
       btn.disabled = true;
       try {
         await rpc("enviar_nota", { p_mao_de_obra: mo.id, p_inicio: per.inicio, p_fim: per.fim, p_tipo: per.tipo, p_mensagem: msg || null });
-        if (janela) janela.location.href = `${linkWhats(mo.whatsapp)}?text=${encodeURIComponent(textoWhats(mo, linhas, total, qtd, msg))}`;
-        aviso(whats ? "Nota enviada! Confira o WhatsApp que abriu." : "Nota enviada para o painel dela!");
+        if (compartilhar) {
+          aviso((await compartilhar) ? "Nota enviada!" : "Nota enviada para o painel. O WhatsApp não foi aberto.");
+        } else if (janela) {
+          const ok = await copiou;
+          if (!ok && arquivo) baixar(arquivo);
+          janela.location.href = `${linkWhats(mo.whatsapp)}?text=${encodeURIComponent(ok
+            ? `Olá, ${mo.nome.split(" ")[0]}! Segue o fechamento — ${per.rotulo}.` : textoWhats(mo, linhas, total, qtd, msg))}`;
+          aviso(ok ? "Nota enviada! A imagem foi copiada: no WhatsApp, aperte Ctrl+V para colar." : "Nota enviada! A imagem foi baixada — anexe no WhatsApp.");
+        } else {
+          aviso("Nota enviada para o painel dela!");
+        }
         renderAdmin({ moId: mo.id, tipo: per.tipo, ref: per.inicio });
       } catch (e) { janela?.close(); aviso(e.message, true); btn.disabled = false; }
     };

@@ -1,7 +1,7 @@
 // Service worker do app (PWA).
 // Estratégia: sempre tenta a internet primeiro (assim as atualizações chegam na hora);
 // se estiver sem internet, abre a última versão guardada.
-const VERSAO = "bcra-v4";
+const VERSAO = "bcra-v5";
 const ARQUIVOS = [
   "./", "index.html", "dono.html", "producao.html", "config.js",
   "css/style.css", "js/comum.js", "js/dono.js", "js/mao-de-obra.js",
