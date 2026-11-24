@@ -1,6 +1,6 @@
 import {
   sb, exigirPapel, sair, modalTrocarSenha, trocarSenha, adminUsuarios, rpc, q,
-  moeda, inteiro, dataBR, dataHoraBR, inicioMes, nomeMes,
+  moeda, inteiro, dataBR, dataHoraBR, inicioMes, fimMes, nomeMes,
   selo, esc, $, $$, aviso, abrirModal, confirmar,
   isoLocal, periodo, periodoAnterior, periodoSeguinte, rotuloPeriodo, FREQUENCIAS,
 } from "./comum.js";
@@ -51,7 +51,7 @@ async function carregarConf() {
   CONF = Object.fromEntries((await q(sb.from("configuracoes").select("*"))).map((c) => [c.chave, c.valor]));
   return CONF;
 }
-const moduloAtivo = (k) => CONF[`modulo_${k}`] !== "nao";
+const moduloAtivo = (k) => CONF[`modulo_${k === "interna" || k === "fixos" ? "funcionarios" : k}`] !== "nao";
 const tipoDe = (m) => (m.tipo === "interna" ? "interna" : "externa");
 const porHora = (m) => m.forma_pagamento === "hora";
 const numConf = (k) => { const v = String(CONF[k] ?? "").replace(",", "."); return v === "" || isNaN(Number(v)) ? null : Number(v); };
@@ -63,7 +63,9 @@ const resumoQtd = (lista) => {
   const pc = lista.filter((i) => !ehHora(i)).reduce((a, i) => a + Number(i.quantidade), 0);
   return [pc ? `${inteiro(pc)} peças` : "", h ? `${inteiro(h)} h` : ""].filter(Boolean).join(" · ") || "0";
 };
-const TIPOS = { externa: "Mão de obra externa", interna: "Mão de obra interna", fixos: "Funcionários fixos" };
+const TIPOS = { externa: "Mão de obra externa", interna: "Funcionário", fixos: "Funcionários", funcionarios: "Funcionários" };
+// Funcionário por hora = perfil interno pago por hora (tem login). Os demais perfis são mão de obra externa.
+const ehFuncHora = (m) => m.tipo === "interna" && m.forma_pagamento === "hora";
 const FORMAS = { producao: "Por produção", hora: "Por hora" };
 const formaTxt = (m) => (porHora(m) ? `Por hora${valorHoraDe(m) != null ? ` · ${moeda(valorHoraDe(m))}` : ""}` : "Por produção");
 
@@ -78,6 +80,11 @@ const ICONES = {
   fixos: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2.2"/><path d="M5.8 16c.6-1.5 1.8-2.2 3.2-2.2s2.6.7 3.2 2.2M15 10h3M15 13h3"/>',
   usuario: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   senha: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  lixo: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/>',
+  folha: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  rel: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  equip: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+  gastos: '<path d="M4 3h16v18l-3-2-3 2-2-2-2 2-3-2-3 2z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
 };
 const icone = (k) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONES[k]}</svg>`;
 const seta = '<svg class="seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
@@ -128,8 +135,12 @@ $("#fabLote").onclick = () => modalNovoLote();
 
 function menuMais() {
   const itens = [
-    ["maos", "maos", "Cadastro de mão de obra"],
+    ["folha", "folha", "Folha de pagamento"],
+    ["relatorios", "rel", "Relatórios"],
+    ["maos", "maos", "Pessoas"],
     ["servicos", "servicos", "Produtos e serviços"],
+    ["equipamentos", "equip", "Equipamentos"],
+    ["gastos", "gastos", "Gastos do mês"],
     ["admin", "admin", "Administrativo"],
   ];
   const m = abrirModal({
@@ -154,6 +165,10 @@ async function render() {
     if (abaAtual === "servicos") await renderServicos();
     if (abaAtual === "fechamentos") await renderFechamentos();
     if (abaAtual === "admin") await renderAdmin();
+    if (abaAtual === "folha") await renderFolha();
+    if (abaAtual === "relatorios") await renderRelatorios();
+    if (abaAtual === "equipamentos") await renderEquipamentos();
+    if (abaAtual === "gastos") await renderGastos();
   } catch (e) {
     main.innerHTML = `<div class="card vazio">Erro ao carregar: ${esc(e.message)}</div>`;
   }
@@ -162,14 +177,15 @@ async function render() {
 async function carregarMaos(soAtivas = true) {
   let c = sb.from("perfis").select("*").eq("papel", "mao_de_obra").order("nome");
   if (soAtivas) c = c.eq("ativo", true);
-  return q(c);
+  const lista = await q(c);
+  return soAtivas ? lista.filter((m) => !m.excluido_em) : lista;
 }
 async function carregarCatalogo() {
   const [produtos, servicos] = await Promise.all([
     q(sb.from("produtos").select("*").order("nome")),
     q(sb.from("servicos").select("*").order("nome")),
   ]);
-  return { produtos, servicos };
+  return { produtos: produtos.filter((x) => !x.excluido_em), servicos: servicos.filter((x) => !x.excluido_em) };
 }
 
 // ===============================================================
@@ -177,12 +193,15 @@ async function carregarCatalogo() {
 // ===============================================================
 async function renderInicio() {
   const mes = inicioMes();
-  const [maos, abertos, ganhosMes, fixos] = await Promise.all([
+  const [maos, abertos, ganhosMes, funcs, folhaRes] = await Promise.all([
     carregarMaos(),
     q(sb.from("v_lotes").select("id, mao_de_obra_id, mao_de_obra_nome, produto_nome, servico_nome, quantidade, valor_aberto, qtd_falta, aviso_em, aviso_mensagem").eq("status", "aberto")),
     q(sb.from("v_ganhos").select("mao_de_obra_id, origem, quantidade, valor, pago").eq("mes_ref", mes)),
-    moduloAtivo("fixos") ? q(sb.from("funcionarios_fixos").select("*").eq("ativo", true).order("nome")) : Promise.resolve([]),
+    moduloAtivo("funcionarios") ? carregarFuncionarios() : Promise.resolve([]),
+    moduloAtivo("funcionarios") ? rpc("resumo_folha", { p_mes: mes }).catch(() => []) : Promise.resolve([]),
   ]);
+  const externas = maos.filter((m) => !ehFuncHora(m));
+  const extIds = new Set(externas.map((m) => m.id));
   const porMao = {};
   const pm = (id) => (porMao[id] ??= { lotes: 0, valor: 0, avisos: 0, horas: 0, valorHoras: 0 });
   abertos.forEach((l) => {
@@ -193,38 +212,38 @@ async function renderInicio() {
   ganhosMes.filter((g) => g.origem === "hora").forEach((g) => { const x = pm(g.mao_de_obra_id); x.horas += Number(g.quantidade); x.valorHoras += Number(g.valor); });
   const avisos = abertos.filter((l) => l.aviso_em).sort((a, b) => (a.aviso_em < b.aviso_em ? 1 : -1));
   const emAberto = soma(abertos, "valor_aberto");
-  const aPagar = ganhosMes.filter((g) => !g.pago).reduce((a, g) => a + Number(g.valor), 0);
-  const comLote = new Set(abertos.map((l) => l.mao_de_obra_id)).size;
+  const aPagar = ganhosMes.filter((g) => !g.pago && extIds.has(g.mao_de_obra_id)).reduce((a, g) => a + Number(g.valor), 0);
+  const folhaL = Array.isArray(folhaRes) ? folhaRes : [];
+  const folhaTotal = folhaL.reduce((a, r) => a + Number(r.liquido || 0), 0);
   $("#tcPonto").classList.toggle("hidden", !avisos.length);
 
-  const externas = maos.filter((m) => tipoDe(m) === "externa");
-  const internas = maos.filter((m) => tipoDe(m) === "interna");
-  const temHora = maos.some(porHora);
-
-  const tile = (m) => {
+  const tileExt = (m) => {
     const a = porMao[m.id];
     let info, ativo;
     if (porHora(m)) { ativo = !!a?.horas; info = ativo ? `${inteiro(a.horas)} h no mês · ${moeda(a.valorHoras)}` : "sem horas no mês"; }
     else { ativo = !!a?.lotes; info = ativo ? `${a.lotes} lote${a.lotes > 1 ? "s" : ""} · ${moeda(a.valor)}` : "sem lote em aberto"; }
-    return `<button class="btn-nome ${tipoDe(m)} ${ativo ? "" : "inativo"}" data-ficha="${m.id}" data-nome="${esc(m.nome.toLowerCase())}">
+    return `<button class="btn-nome externa ${ativo ? "" : "inativo"}" data-ficha="${m.id}" data-nome="${esc(m.nome.toLowerCase())}">
       ${porHora(m) ? `<span class="tag-hora" title="Paga por hora">⏱</span>` : ""}${esc(maiusc(m.nome))}
       <small>${info}</small>
       ${a?.avisos ? `<span class="bandeira">✋ terminou ${a.avisos > 1 ? a.avisos + " lotes" : "1 lote"}</span>` : ""}</button>`;
   };
-  const secao = (k, pessoas, acoes, conteudo) => `
+  const tileFunc = (p) => {
+    const r = linhaDaFolha(folhaL, p);
+    const info = p.tipo === "mensal"
+      ? `Mensal · ${p.salario != null ? moeda(p.salario) : "sem salário"}${r && Number(r.horas_extras) ? ` · ${inteiro(r.horas_extras)} h extras` : ""}`
+      : `Por hora · ${inteiro(r?.horas || 0)} h no mês`;
+    return `<button class="btn-nome ${p.tipo === "mensal" ? "func-mensal" : "func-hora"}" data-func="${p.chave}" data-nome="${esc(p.nome.toLowerCase())}">
+      ${esc(maiusc(p.nome))}<small>${info}</small>${r?.folha_pagamento_id ? `<span class="bandeira ok">✓ pago no mês</span>` : ""}</button>`;
+  };
+  const secao = (k, pessoas, sub, acoes, conteudo) => `
     <section class="secao-inicio" data-secao="${k}">
       <div class="secao-cab">
-        <div><h2><i class="ponto ${k}"></i>${TIPOS[k]}</h2><span>${pessoas} ${pessoas === 1 ? "pessoa" : "pessoas"}</span></div>
+        <div><h2><i class="ponto ${k}"></i>${TIPOS[k]}</h2><span>${pessoas} ${pessoas === 1 ? "pessoa" : "pessoas"} · ${sub}</span></div>
         <div class="secao-acoes">${acoes}</div>
       </div>
       ${conteudo}
     </section>`;
   const vazioSecao = (k) => `<div class="secao-vazia">Ninguém cadastrado aqui ainda. <button class="link" data-cadastrar="${k}">Cadastrar agora</button></div>`;
-  const grade = (lista, k) => (lista.length ? `<div class="grade-nomes">${lista.map(tile).join("")}</div>` : vazioSecao(k));
-  const botoesMo = (lista) => [
-    lista.some((m) => !porHora(m)) ? `<button class="btn acento peq" data-novolote>＋ Enviar lote</button>` : "",
-    lista.some(porHora) ? `<button class="btn sec peq" data-horas>⏱ Lançar horas</button>` : "",
-  ].join("");
 
   main.innerHTML = `
     <div class="topo-pagina pg-inicio">
@@ -233,14 +252,14 @@ async function renderInicio() {
         <label class="busca"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
           <input id="buscaNome" type="search" placeholder="Buscar pessoa…" autocomplete="off"></label>
         <button class="sino" id="sinoInicio" title="Avisos" aria-label="Avisos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>${avisos.length ? `<b>${avisos.length}</b>` : ""}</button>
-        ${maos.some((m) => !porHora(m)) ? `<button class="btn acento" id="btnNovoLote">＋ Enviar lote</button>` : ""}
+        ${externas.some((m) => !porHora(m)) ? `<button class="btn acento" id="btnNovoLote">＋ Enviar lote</button>` : ""}
       </div>
     </div>
 
     <div class="kpis-v2">
       <div class="kpi-v2 escuro"><span>Em aberto com a mão de obra</span><strong>${moeda(emAberto)}</strong><small>${abertos.length} lote${abertos.length === 1 ? "" : "s"} em aberto</small></div>
-      <div class="kpi-v2"><span>A pagar no mês</span><strong>${moeda(aPagar)}</strong><small>finalizado e ainda não pago</small></div>
-      <div class="kpi-v2"><span>Trabalhando agora</span><strong>${comLote}</strong><small>de ${maos.length} cadastrada${maos.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>A pagar no mês (externa)</span><strong>${moeda(aPagar)}</strong><small>finalizado e ainda não pago</small></div>
+      <div class="kpi-v2"><span>Folha do mês</span><strong>${moeda(folhaTotal)}</strong><small>${funcs.length} funcionário${funcs.length === 1 ? "" : "s"}</small></div>
       <div class="kpi-v2 ${avisos.length ? "amarelo" : ""}"><span>Avisos</span><strong>${avisos.length}</strong><small>${avisos.length ? "terminaram lote" : "nenhum aviso novo"}</small></div>
     </div>
 
@@ -250,26 +269,28 @@ async function renderInicio() {
         <br><span class="small muted">${dataHoraBR(l.aviso_em)}${l.aviso_mensagem ? ` · “${esc(l.aviso_mensagem)}”` : ""}</span></span>
         <button class="btn peq" data-ficha="${l.mao_de_obra_id}">Abrir</button></li>`).join("")}</ul></div></div>` : ""}
 
-    ${moduloAtivo("externa") ? secao("externa", externas.length, botoesMo(externas), grade(externas, "externa")) : ""}
-    ${moduloAtivo("interna") ? secao("interna", internas.length, botoesMo(internas), grade(internas, "interna")) : ""}
-    ${moduloAtivo("fixos") ? secao("fixos", fixos.length, `<button class="btn sec peq" data-cadastrar="fixos">＋ Cadastrar</button>`,
-      fixos.length ? `<div class="grade-nomes">${fixos.map((f) => `<button class="btn-nome fixo" data-fixo="${f.id}" data-nome="${esc(f.nome.toLowerCase())}">${esc(maiusc(f.nome))}
-        <small>${esc(f.cargo || "Funcionário fixo")}${f.salario != null ? ` · ${moeda(f.salario)}` : ""}</small></button>`).join("")}</div>` : vazioSecao("fixos")) : ""}
-    ${!moduloAtivo("externa") && !moduloAtivo("interna") && !moduloAtivo("fixos") ? `<div class="card vazio">Nenhum tipo de mão de obra está ativado. Ative em <strong>Administrativo → Tipos de mão de obra</strong>.</div>` : ""}
-    ${!maos.length && !fixos.length ? `<p class="muted small" style="text-align:center">Comece por <strong>Produtos e serviços</strong> e depois <strong>Mão de obra</strong>.</p>` : ""}`;
+    ${moduloAtivo("externa") ? secao("externa", externas.length, "recebem por produção (lotes)",
+      externas.some((m) => !porHora(m)) ? `<button class="btn acento peq" data-novolote>＋ Enviar lote</button>` : "",
+      externas.length ? `<div class="grade-nomes">${externas.map(tileExt).join("")}</div>` : vazioSecao("externa")) : ""}
+    ${moduloAtivo("funcionarios") ? secao("funcionarios", funcs.length, "salário mensal ou por hora",
+      `${funcs.some((p) => p.tipo === "hora") ? `<button class="btn sec peq" data-horas>⏱ Lançar horas</button>` : ""}
+       <button class="btn sec peq" data-cadastrar="funcionarios">＋ Cadastrar funcionário</button>`,
+      funcs.length ? `<div class="grade-nomes">${funcs.map(tileFunc).join("")}</div>
+        <div class="legenda-func"><span><i class="lg-mensal"></i>Salário mensal</span><span><i class="lg-hora"></i>Por hora (tem login)</span></div>` : vazioSecao("funcionarios")) : ""}
+    ${!moduloAtivo("externa") && !moduloAtivo("funcionarios") ? `<div class="card vazio">Nenhum tipo de mão de obra está ativado. Ative em <strong>Administrativo → Tipos de mão de obra</strong>.</div>` : ""}
+    ${!maos.length && !funcs.length ? `<p class="muted small" style="text-align:center">Comece por <strong>Produtos e serviços</strong> e depois <strong>Pessoas</strong>.</p>` : ""}`;
 
   $$("[data-ficha]", main).forEach((b) => (b.onclick = () => abrirFicha(b.dataset.ficha)));
-  $$("[data-fixo]", main).forEach((b) => (b.onclick = () => modalFixo(fixos.find((f) => f.id == b.dataset.fixo), renderInicio)));
+  $$("[data-func]", main).forEach((b) => (b.onclick = () => fichaFuncionario(funcs.find((p) => p.chave === b.dataset.func))));
   $$("[data-novolote]", main).forEach((b) => (b.onclick = () => modalNovoLote()));
   $$("[data-horas]", main).forEach((b) => (b.onclick = () => modalLancarHoras()));
-  $$("[data-cadastrar]", main).forEach((b) => (b.onclick = () => (b.dataset.cadastrar === "fixos" ? modalFixo({}, renderInicio) : modalNovaMo(b.dataset.cadastrar, renderInicio))));
+  $$("[data-cadastrar]", main).forEach((b) => (b.onclick = () => modalNovaMo(b.dataset.cadastrar, renderInicio)));
   $("#btnNovoLote")?.addEventListener("click", () => modalNovoLote());
   $("#sinoInicio").onclick = () => (avisos.length ? $("#avisosInicio").scrollIntoView({ behavior: "smooth" }) : aviso("Nenhum aviso novo."));
   $("#buscaNome").oninput = (e) => {
     const t = e.target.value.trim().toLowerCase();
     $$("[data-nome]", main).forEach((b) => b.classList.toggle("hidden", !!t && !b.dataset.nome.includes(t)));
   };
-  void temHora;
 }
 
 // ---------------------------------------------------------------
@@ -346,7 +367,8 @@ async function modalLancarHoras(moId = "") {
       await rpc("lancar_horas", { p_mao_de_obra: mo, p_data: fd.get("data"), p_horas: h, p_valor_hora: Number(fd.get("valor")), p_observacao: fd.get("obs") || null });
       aviso("Horas lançadas!");
       if (abaAtual === "inicio") renderInicio();
-      if (moId) { const x = maos.find((y) => y.id === mo); if (x) fichaHoras(x); }
+      if (moId) abrirFicha(mo);
+      if (abaAtual === "folha") renderFolha();
     },
   });
 }
@@ -361,6 +383,7 @@ async function abrirFicha(moId) {
     q(sb.from("v_lotes").select("*").eq("mao_de_obra_id", moId).eq("status", "aberto").order("enviado_em")),
     q(sb.from("v_entregas").select("*").eq("mao_de_obra_id", moId).eq("mes_ref", mes).order("entregue_em", { ascending: false })),
   ]);
+  if (ehFuncHora(mo)) return fichaFuncionario((await carregarFuncionarios(true)).find((x) => x.chave === `p${mo.id}`));
   if (porHora(mo)) return fichaHoras(mo);
 
   const valorAberto = soma(abertos, "valor_aberto");
@@ -480,7 +503,7 @@ async function abrirFicha(moId) {
 // ---------------------------------------------------------------
 async function modalNovoLote(moId = "") {
   const [todas, { produtos, servicos }] = await Promise.all([carregarMaos(), carregarCatalogo()]);
-  const maos = todas.filter((m) => !porHora(m) && moduloAtivo(tipoDe(m)));
+  const maos = todas.filter((m) => !porHora(m));
   const prodAtivos = produtos.filter((p) => p.ativo && servicos.some((s) => s.produto_id === p.id && s.ativo));
   if (!maos.length) return aviso("Cadastre uma mão de obra que recebe por produção primeiro.", true);
   if (!prodAtivos.length) return aviso("Cadastre um produto com pelo menos um serviço primeiro.", true);
@@ -502,10 +525,7 @@ async function modalNovoLote(moId = "") {
     titulo: "Enviar lote",
     conteudo: `
       <div class="linha"><div><label>Mão de obra *</label><select name="mo" required>
-        <option value="">Selecione…</option>${["externa", "interna"].map((t) => {
-          const l = maos.filter((x) => tipoDe(x) === t);
-          return l.length ? `<optgroup label="${TIPOS[t]}">${l.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</optgroup>` : "";
-        }).join("")}</select></div></div>
+        <option value="">Selecione…</option>${maos.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div></div>
       <div id="itens">${linhaItem()}</div>
       <button type="button" class="btn sec bloco" id="addItem" style="margin-bottom:.8rem">＋ Adicionar outro serviço</button>
       <div class="lote-total" style="margin:0 0 .8rem"><span id="qtdItens">Total</span><span id="prevTotal">R$ 0,00</span></div>
@@ -775,7 +795,7 @@ function modalEmpresas(empresas) {
   abrirModal({
     titulo: "Empresas",
     conteudo: `
-      ${empresas.length ? `<ul class="lista-final">${empresas.map((e) => `<li class="${e.ativo ? "" : "muted"}">
+      ${empresas.length ? `<ul class="lista-final">${empresas.filter((e) => !e.excluido_em).map((e) => `<li class="${e.ativo ? "" : "muted"}">
         <span><strong>${esc(e.nome)}</strong>${e.whatsapp ? `<br><span class="small">${esc(e.whatsapp)}</span>` : ""}${e.ativo ? "" : " <span class='small'>(inativa)</span>"}</span>
         <button type="button" class="btn sec peq" data-edemp="${e.id}">Editar</button></li>`).join("")}</ul>` : `<p class="muted">Nenhuma empresa cadastrada.</p>`}
       <h3 style="margin-top:1rem">Nova empresa</h3>
@@ -789,7 +809,15 @@ function modalEmpresas(empresas) {
           titulo: "Editar empresa",
           conteudo: `<div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(e.nome)}" required></div><div><label>WhatsApp</label><input name="whatsapp" value="${esc(e.whatsapp)}"></div></div>
             <label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="ativo" style="width:auto" ${e.ativo ? "checked" : ""}> Ativa</label>
-            <button type="submit" class="btn bloco">Salvar</button>`,
+            <button type="submit" class="btn bloco">Salvar</button>
+            <button type="button" class="btn perigo bloco" id="exEmp" style="margin-top:.5rem">Excluir empresa</button>`,
+          aoAbrir: (f2, fechar2) => {
+            $("#exEmp", f2).onclick = async () => {
+              if (!(await confirmar(`Excluir a empresa ${e.nome}? As entradas antigas continuam nos relatórios.`, "Excluir"))) return;
+              try { await q(sb.from("empresas").update({ excluido_em: agoraIso(), ativo: false }).eq("id", e.id)); fechar2(); aviso("Empresa excluída."); renderMinha(); }
+              catch (err) { aviso(err.message, true); }
+            };
+          },
           onSubmit: async (fd) => {
             if (!fd.get("nome")) throw new Error("Informe o nome.");
             await q(sb.from("empresas").update({ nome: fd.get("nome"), whatsapp: fd.get("whatsapp") || null, ativo: fd.get("ativo") === "on" }).eq("id", e.id));
@@ -812,44 +840,39 @@ function modalEmpresas(empresas) {
 // ===============================================================
 let filtroCad = "todos";
 
-// Campos comuns do cadastro (externa ou interna)
+// Campos do cadastro da mão de obra externa
 function camposMo(m = {}) {
-  const tipo = m.tipo || "externa";
-  const forma = m.forma_pagamento || CONF[`pag_padrao_${tipo}`] || "producao";
+  const forma = m.forma_pagamento || CONF.pag_padrao_externa || "producao";
   return `
     <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(m.nome)}" required></div></div>
     <div class="linha">
-      <div><label>Tipo *</label><select name="tipo">${["externa", "interna"].map((k) => `<option value="${k}" ${tipo === k ? "selected" : ""}>${TIPOS[k]}</option>`).join("")}</select></div>
       <div><label>Recebe *</label><select name="forma_pagamento">${Object.entries(FORMAS).map(([k, t]) => `<option value="${k}" ${forma === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
       <div class="campo-hora ${forma === "hora" ? "" : "hidden"}"><label>Valor da hora (R$)</label><input name="valor_hora" type="number" min="0" step="0.01" value="${m.valor_hora ?? ""}" placeholder="${numConf("valor_hora_padrao") != null ? `padrão ${moeda(numConf("valor_hora_padrao"))}` : ""}"></div>
+      <div><label>Fechamento</label><select name="frequencia_pagamento">${Object.entries(FREQUENCIAS).map(([k, t]) =>
+        `<option value="${k}" ${(m.frequencia_pagamento || "mensal") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
     </div>
     <div class="linha">
       <div><label>WhatsApp</label><input name="whatsapp" value="${esc(m.whatsapp)}" inputmode="tel" placeholder="(11) 99999-9999"></div>
       <div><label>Chave PIX</label><input name="pix" value="${esc(m.pix)}" placeholder="CPF, telefone, e-mail ou aleatória"></div>
     </div>
-    <div class="linha">
-      <div><label>Endereço</label><input name="endereco" value="${esc(m.endereco)}"></div>
-      <div><label>Fechamento</label><select name="frequencia_pagamento">${Object.entries(FREQUENCIAS).map(([k, t]) =>
-        `<option value="${k}" ${(m.frequencia_pagamento || "mensal") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-    </div>`;
+    <div class="linha"><div><label>Endereço</label><input name="endereco" value="${esc(m.endereco)}"></div></div>`;
 }
 function ligarCamposMo(f) {
   const mostrar = () => $(".campo-hora", f).classList.toggle("hidden", f.forma_pagamento.value !== "hora");
   f.forma_pagamento.onchange = mostrar;
-  f.tipo.onchange = () => { const p = CONF[`pag_padrao_${f.tipo.value}`]; if (p && !f.dataset.editando) { f.forma_pagamento.value = p; mostrar(); } };
 }
 const dadosMo = (fd) => ({
-  tipo: fd.get("tipo") || "externa",
+  tipo: "externa",
   forma_pagamento: fd.get("forma_pagamento") || "producao",
   valor_hora: fd.get("forma_pagamento") === "hora" && fd.get("valor_hora") !== "" ? Number(fd.get("valor_hora")) : null,
   frequencia_pagamento: fd.get("frequencia_pagamento") || "mensal",
 });
 
 function modalNovaMo(tipo = "externa", depois = renderMaos) {
-  if (tipo === "fixos") return modalFixo({}, depois);
+  if (tipo !== "externa") return modalFuncionario(null, depois);
   abrirModal({
-    titulo: "Novo cadastro",
-    conteudo: `${camposMo({ tipo })}
+    titulo: "Nova mão de obra externa",
+    conteudo: `${camposMo({})}
       <div class="linha">
         <div><label>Usuário (login) *</label><input name="usuario" required autocapitalize="none" placeholder="ex.: adriana"></div>
         <div><label>Senha inicial *</label><input name="senha" required minlength="6" placeholder="mín. 6 caracteres"></div>
@@ -857,6 +880,7 @@ function modalNovaMo(tipo = "externa", depois = renderMaos) {
       <button type="submit" class="btn bloco">Criar acesso</button>`,
     aoAbrir: ligarCamposMo,
     onSubmit: async (fd) => {
+      if (!String(fd.get("nome") || "").trim()) throw new Error("Informe o nome.");
       const novo = await adminUsuarios({ acao: "criar", nome: fd.get("nome"), usuario: fd.get("usuario"), senha: fd.get("senha"),
         whatsapp: fd.get("whatsapp"), pix: fd.get("pix"), endereco: fd.get("endereco") });
       if (novo?.id) await q(sb.from("perfis").update(dadosMo(fd)).eq("id", novo.id));
@@ -866,58 +890,23 @@ function modalNovaMo(tipo = "externa", depois = renderMaos) {
   });
 }
 
-function modalFixo(f = {}, depois = renderMaos) {
-  abrirModal({
-    titulo: f.id ? `Editar ${f.nome}` : "Novo funcionário fixo",
-    conteudo: `
-      <p class="muted small" style="margin-top:0">Funcionário registrado, com salário mensal. Não tem login nem entra nos fechamentos.</p>
-      <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(f.nome)}" required></div></div>
-      <div class="linha">
-        <div><label>Cargo / função</label><input name="cargo" value="${esc(f.cargo)}" placeholder="Ex.: Cortador"></div>
-        <div><label>Salário (R$)</label><input name="salario" type="number" min="0" step="0.01" value="${f.salario ?? ""}"></div>
-      </div>
-      <div class="linha">
-        <div><label>WhatsApp</label><input name="whatsapp" value="${esc(f.whatsapp)}" inputmode="tel"></div>
-        <div><label>Chave PIX</label><input name="pix" value="${esc(f.pix)}"></div>
-      </div>
-      <div class="linha"><div><label>Endereço</label><input name="endereco" value="${esc(f.endereco)}"></div></div>
-      ${f.id ? `<label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="ativo" style="width:auto" ${f.ativo ? "checked" : ""}> Ativo</label>` : ""}
-      <button type="submit" class="btn bloco">Salvar</button>`,
-    onSubmit: async (fd) => {
-      const nome = String(fd.get("nome") || "").trim();
-      if (!nome) throw new Error("Informe o nome.");
-      const d = { nome, cargo: fd.get("cargo") || null, salario: fd.get("salario") === "" ? null : Number(fd.get("salario")),
-        whatsapp: fd.get("whatsapp") || null, pix: fd.get("pix") || null, endereco: fd.get("endereco") || null };
-      if (f.id) await q(sb.from("funcionarios_fixos").update({ ...d, ativo: fd.get("ativo") === "on" }).eq("id", f.id));
-      else await q(sb.from("funcionarios_fixos").insert(d));
-      aviso("Salvo!"); depois();
-    },
-  });
-}
-
 async function renderMaos() {
-  const [maos, fixos] = await Promise.all([
-    carregarMaos(false),
-    q(sb.from("funcionarios_fixos").select("*").order("nome")),
-  ]);
-  const filtros = [["todos", "Todos"], ["externa", "Externa"], ["interna", "Interna"], ["fixos", "Fixos"]]
-    .filter(([k]) => k === "todos" || moduloAtivo(k) || (k === "fixos" ? fixos.length : maos.some((m) => tipoDe(m) === k)));
-  if (!filtros.some(([k]) => k === filtroCad)) filtroCad = "todos";
-  const lista = filtroCad === "todos" ? maos : filtroCad === "fixos" ? [] : maos.filter((m) => tipoDe(m) === filtroCad);
-  const verFixos = (filtroCad === "todos" && (moduloAtivo("fixos") || fixos.length)) || filtroCad === "fixos";
-  const cont = (k) => (k === "todos" ? maos.length + fixos.length : k === "fixos" ? fixos.length : maos.filter((m) => tipoDe(m) === k).length);
+  const [todas, funcs] = await Promise.all([carregarMaos(false), carregarFuncionarios()]);
+  const externas = todas.filter((m) => !ehFuncHora(m) && !m.excluido_em);
+  const filtros = [["todos", "Todos", externas.length + funcs.length], ["externa", "Mão de obra externa", externas.length], ["funcionarios", "Funcionários", funcs.length]];
+  const verExt = filtroCad !== "funcionarios", verFunc = filtroCad !== "externa";
 
   main.innerHTML = `
     <div class="topo-pagina">
-      <div><h1>Mão de obra</h1><p>Cadastro de quem trabalha com o Bruno. Externa e interna entram no painel com usuário e senha.</p></div>
+      <div><h1>Pessoas</h1><p>Mão de obra externa (lotes, com login) e funcionários da fábrica (salário mensal ou por hora).</p></div>
       <div class="topo-acoes"><button class="btn acento" id="novoMo">＋ Novo cadastro</button></div>
     </div>
-    <div class="seg filtros-cad">${filtros.map(([k, t]) => `<button class="${k === filtroCad ? "ativo" : ""}" data-filtro="${k}">${t} <b>${cont(k)}</b></button>`).join("")}</div>
-    ${filtroCad !== "fixos" ? (lista.length ? `<div class="card tabela-wrap"><table>
-      <thead><tr><th>Nome</th><th>Tipo</th><th>Recebe</th><th>Usuário</th><th>WhatsApp</th><th>Chave PIX</th><th>Fechamento</th><th>Situação</th><th></th></tr></thead>
-      <tbody>${lista.map((m) => `<tr>
+    <div class="seg filtros-cad">${filtros.map(([k, t, n]) => `<button class="${k === filtroCad ? "ativo" : ""}" data-filtro="${k}">${t} <b>${n}</b></button>`).join("")}</div>
+    ${verExt ? `<h2 class="sub-cad">Mão de obra externa</h2>
+      ${externas.length ? `<div class="card tabela-wrap"><table>
+      <thead><tr><th>Nome</th><th>Recebe</th><th>Usuário</th><th>WhatsApp</th><th>Chave PIX</th><th>Fechamento</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${externas.map((m) => `<tr>
         <td><strong>${esc(m.nome)}</strong></td>
-        <td><span class="chip-tipo ${tipoDe(m)}">${tipoDe(m) === "interna" ? "Interna" : "Externa"}</span></td>
         <td class="small">${formaTxt(m)}</td>
         <td>${esc(m.usuario)}</td>
         <td>${m.whatsapp ? `<a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : "—"}</td>
@@ -927,40 +916,57 @@ async function renderMaos() {
         <td class="right" style="white-space:nowrap">
           <button class="btn sec peq" data-ed="${m.id}">Editar</button>
           <button class="btn sec peq" data-senha="${m.id}">Login</button>
-          <button class="btn ${m.ativo ? "perigo" : "ok"} peq" data-at="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
-        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Ninguém cadastrado${filtroCad === "todos" ? "" : ` como ${TIPOS[filtroCad].toLowerCase()}`}.</div>`) : ""}
-    ${verFixos ? `<h2 class="sub-cad">Funcionários fixos</h2>
-      ${fixos.length ? `<div class="card tabela-wrap"><table>
-        <thead><tr><th>Nome</th><th>Cargo</th><th class="right">Salário</th><th>WhatsApp</th><th>Chave PIX</th><th>Situação</th><th></th></tr></thead>
-        <tbody>${fixos.map((f) => `<tr><td><strong>${esc(f.nome)}</strong></td><td>${esc(f.cargo || "—")}</td>
-          <td class="right num">${f.salario != null ? moeda(f.salario) : "—"}</td>
-          <td>${f.whatsapp ? `<a href="${linkWhats(f.whatsapp)}" target="_blank" rel="noopener">${esc(f.whatsapp)}</a>` : "—"}</td>
-          <td class="small">${esc(f.pix || "—")}</td><td>${f.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
-          <td class="right"><button class="btn sec peq" data-edfixo="${f.id}">Editar</button></td></tr>`).join("")}</tbody></table></div>`
-        : `<div class="card vazio">Nenhum funcionário fixo. <button class="link" id="novoFixo">Cadastrar</button></div>`}` : ""}`;
+          <button class="btn ${m.ativo ? "sec" : "ok"} peq" data-at="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
+          ${lixeira(`data-exmo="${m.id}"`, `Excluir ${esc(m.nome)}`)}
+        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhuma mão de obra externa cadastrada.</div>`}` : ""}
+    ${verFunc ? `<h2 class="sub-cad">Funcionários</h2>
+      ${funcs.length ? `<div class="card tabela-wrap"><table>
+      <thead><tr><th>Nome</th><th>Recebe</th><th>Cargo</th><th class="right">Hora extra</th><th>WhatsApp</th><th>Chave PIX</th><th>Login</th><th></th></tr></thead>
+      <tbody>${funcs.map((p) => `<tr>
+        <td><button class="link" data-fichaf="${p.chave}"><strong>${esc(p.nome)}</strong></button></td>
+        <td class="small">${recebeTxt(p)}</td>
+        <td class="small">${esc(p.cargo || "—")}</td>
+        <td class="right num">${p.valor_hora_extra != null ? moeda(p.valor_hora_extra) : "—"}</td>
+        <td>${p.whatsapp ? `<a href="${linkWhats(p.whatsapp)}" target="_blank" rel="noopener">${esc(p.whatsapp)}</a>` : "—"}</td>
+        <td class="small">${esc(p.pix || "—")}</td>
+        <td class="small">${p.tipo === "hora" ? esc(p.usuario) : `<span class="muted">sem login</span>`}</td>
+        <td class="right" style="white-space:nowrap">
+          <button class="btn sec peq" data-edf="${p.chave}">Editar</button>
+          ${p.tipo === "hora" ? `<button class="btn sec peq" data-senha="${p.id}">Login</button>` : ""}
+          ${lixeira(`data-exf="${p.chave}"`, `Excluir ${esc(p.nome)}`)}
+        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhum funcionário cadastrado.</div>`}` : ""}`;
 
   $$("[data-filtro]", main).forEach((b) => (b.onclick = () => { filtroCad = b.dataset.filtro; renderMaos(); }));
   $("#novoMo").onclick = () => {
     if (filtroCad !== "todos") return modalNovaMo(filtroCad);
-    const ops = ["externa", "interna", "fixos"].filter((k) => moduloAtivo(k));
+    const ops = ["externa", "funcionarios"].filter((k) => moduloAtivo(k));
     if (ops.length === 1) return modalNovaMo(ops[0]);
     const m = abrirModal({
       titulo: "Novo cadastro",
-      conteudo: `<p class="muted small" style="margin-top:0">Que tipo de pessoa você vai cadastrar?</p>
-        <div class="menu-mais">${(ops.length ? ops : ["externa", "interna", "fixos"]).map((k) => `<button type="button" data-novo="${k}">${icone(k)}<span>${TIPOS[k]}</span>${seta}</button>`).join("")}</div>`,
+      conteudo: `<p class="muted small" style="margin-top:0">Quem você vai cadastrar?</p>
+        <div class="menu-mais">
+          <button type="button" data-novo="externa">${icone("externa")}<span>Mão de obra externa<br><small class="muted">leva lotes para fazer · tem login</small></span>${seta}</button>
+          <button type="button" data-novo="funcionarios">${icone("fixos")}<span>Funcionário<br><small class="muted">salário mensal ou por hora</small></span>${seta}</button>
+        </div>`,
     });
     $$("[data-novo]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); modalNovaMo(b.dataset.novo); }));
   };
-  $("#novoFixo")?.addEventListener("click", () => modalFixo());
-  $$("[data-edfixo]", main).forEach((b) => (b.onclick = () => modalFixo(fixos.find((x) => x.id == b.dataset.edfixo))));
+  const func = (ch) => funcs.find((p) => p.chave === ch);
+  $$("[data-fichaf]", main).forEach((b) => (b.onclick = () => fichaFuncionario(func(b.dataset.fichaf))));
+  $$("[data-edf]", main).forEach((b) => (b.onclick = () => modalFuncionario(func(b.dataset.edf), renderMaos)));
+  $$("[data-exf]", main).forEach((b) => (b.onclick = async () => { if (await excluirFuncionario(func(b.dataset.exf))) renderMaos(); }));
+  $$("[data-exmo]", main).forEach((b) => (b.onclick = async () => {
+    const m = externas.find((x) => x.id === b.dataset.exmo);
+    try { if (await excluirPerfil(m)) { aviso(`${m.nome} foi excluída.`); renderMaos(); } } catch (e) { aviso(e.message, true); }
+  }));
 
   $$("[data-ed]", main).forEach((b) => (b.onclick = () => {
-    const m = maos.find((x) => x.id === b.dataset.ed);
+    const m = externas.find((x) => x.id === b.dataset.ed);
     abrirModal({
       titulo: `Editar ${m.nome}`,
       conteudo: `${camposMo(m)}<p class="muted small">Usuário: <strong>${esc(m.usuario)}</strong> (para mudar, use o botão Login)</p>
         <button type="submit" class="btn bloco">Salvar</button>`,
-      aoAbrir: (f) => { f.dataset.editando = "1"; ligarCamposMo(f); },
+      aoAbrir: ligarCamposMo,
       onSubmit: async (fd) => {
         if (!fd.get("nome")) throw new Error("Informe o nome.");
         await q(sb.from("perfis").update({
@@ -973,14 +979,14 @@ async function renderMaos() {
   }));
 
   $$("[data-senha]", main).forEach((b) => (b.onclick = () => {
-    const m = maos.find((x) => x.id === b.dataset.senha);
+    const m = todas.find((x) => x.id === b.dataset.senha);
     abrirModal({
       titulo: `Login de ${m.nome}`,
       conteudo: `<div class="linha">
           <div><label>Usuário</label><input name="usuario" value="${esc(m.usuario)}" required autocapitalize="none"></div>
           <div><label>Nova senha (deixe em branco para manter)</label><input name="senha" minlength="6" placeholder="mín. 6 caracteres"></div>
         </div>
-        <p class="muted small">Depois de salvar, passe o novo usuário e/ou a nova senha para ${esc(m.nome)}. Ela pode trocar a senha depois no painel dela.</p>
+        <p class="muted small">Depois de salvar, passe o novo usuário e/ou a nova senha para ${esc(m.nome)}. A pessoa pode trocar a senha depois no painel dela.</p>
         <button type="submit" class="btn bloco">Salvar</button>`,
       onSubmit: async (fd) => {
         const novo = String(fd.get("usuario") || "").trim().toLowerCase();
@@ -997,12 +1003,13 @@ async function renderMaos() {
   }));
 
   $$("[data-at]", main).forEach((b) => (b.onclick = async () => {
-    const m = maos.find((x) => x.id === b.dataset.at);
+    const m = externas.find((x) => x.id === b.dataset.at);
     if (!(await confirmar(`${m.ativo ? "Desativar" : "Ativar"} o acesso de ${m.nome}?`))) return;
     try { await adminUsuarios({ acao: m.ativo ? "desativar" : "ativar", id: m.id }); aviso("Pronto!"); renderMaos(); }
     catch (e) { aviso(e.message, true); }
   }));
 }
+
 
 // ===============================================================
 // CADASTROS SERVIÇOS — produto com seus serviços e preços
@@ -1043,7 +1050,18 @@ async function renderServicos() {
     titulo: p.id ? "Editar produto" : "Novo produto",
     conteudo: `<div class="linha"><div><label>Nome do produto *</label><input name="nome" value="${esc(p.nome)}" required placeholder="Ex.: Cortina"></div></div>
       ${p.id ? `<label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="ativo" style="width:auto" ${p.ativo ? "checked" : ""}> Ativo</label>` : ""}
-      <button type="submit" class="btn bloco">Salvar</button>`,
+      <button type="submit" class="btn bloco">Salvar</button>
+      ${p.id ? `<button type="button" class="btn perigo bloco" id="exProd" style="margin-top:.5rem">Excluir produto</button>` : ""}`,
+    aoAbrir: (f, fechar) => {
+      $("#exProd", f)?.addEventListener("click", async () => {
+        if (!(await confirmar(`Excluir o produto ${p.nome} e os serviços dele? Lotes e entradas antigos continuam nos relatórios.`, "Excluir"))) return;
+        try {
+          await q(sb.from("servicos").update({ excluido_em: agoraIso(), ativo: false }).eq("produto_id", p.id));
+          await q(sb.from("produtos").update({ excluido_em: agoraIso(), ativo: false }).eq("id", p.id));
+          fechar(); aviso("Produto excluído."); renderServicos();
+        } catch (e) { aviso(e.message, true); }
+      });
+    },
     onSubmit: async (fd) => {
       if (!fd.get("nome")) throw new Error("Informe o nome.");
       if (p.id) await q(sb.from("produtos").update({ nome: fd.get("nome"), ativo: fd.get("ativo") === "on" }).eq("id", p.id));
@@ -1077,8 +1095,14 @@ async function renderServicos() {
         <p class="small" id="lucroPrev"></p>
         <label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem"><input type="checkbox" name="ativo" style="width:auto" ${s.ativo ? "checked" : ""}> Ativo</label>
         <p class="muted small">Mudar os valores não altera lotes nem entradas já lançados.</p>
-        <button type="submit" class="btn bloco">Salvar</button>`,
-      aoAbrir: (f) => {
+        <button type="submit" class="btn bloco">Salvar</button>
+        <button type="button" class="btn perigo bloco" id="exServ" style="margin-top:.5rem">Excluir serviço</button>`,
+      aoAbrir: (f, fechar) => {
+        $("#exServ", f).onclick = async () => {
+          if (!(await confirmar(`Excluir o serviço ${s.nome}? Lotes e entradas antigos continuam nos relatórios.`, "Excluir"))) return;
+          try { await q(sb.from("servicos").update({ excluido_em: agoraIso(), ativo: false }).eq("id", s.id)); fechar(); aviso("Serviço excluído."); renderServicos(); }
+          catch (e) { aviso(e.message, true); }
+        };
         const at = () => ($("#lucroPrev", f).innerHTML = f.cliente.value === "" ? "" : `Lucro por peça: <strong>${moeda(Number(f.cliente.value) - Number(f.valor.value || 0))}</strong>`);
         f.cliente.oninput = f.valor.oninput = at; at();
       },
@@ -1108,8 +1132,9 @@ async function renderFechamentos() {
     q(sb.from("pagamentos").select("*").lte("inicio", p.fim).gte("fim", p.inicio).order("pago_em")),
   ]);
   const por = {};
+  const funcIds = new Set(maos.filter(ehFuncHora).map((m) => m.id));
   const g = (id) => (por[id] ??= { total: 0, pago: 0, aberto: 0, entregas: [] });
-  ganhos.forEach((e) => { const x = g(e.mao_de_obra_id); x.total += Number(e.valor); if (e.pago) x.pago += Number(e.valor); x.entregas.push(e); });
+  ganhos.filter((e) => !funcIds.has(e.mao_de_obra_id)).forEach((e) => { const x = g(e.mao_de_obra_id); x.total += Number(e.valor); if (e.pago) x.pago += Number(e.valor); x.entregas.push(e); });
   abertos.forEach((l) => { g(l.mao_de_obra_id).aberto += Number(l.valor_aberto); });
   const tot = Object.values(por).reduce((a, x) => ({ total: a.total + x.total, pago: a.pago + x.pago, aberto: a.aberto + x.aberto }), { total: 0, pago: 0, aberto: 0 });
 
@@ -1126,7 +1151,7 @@ async function renderFechamentos() {
     </button>`;
   };
   const secao = (k) => {
-    const lista = maos.filter((m) => tipoDe(m) === k && (m.ativo || por[m.id]?.total));
+    const lista = maos.filter((m) => !ehFuncHora(m) && (m.ativo || por[m.id]?.total));
     if (!moduloAtivo(k) && !lista.some((m) => por[m.id]?.total)) return "";
     const s = lista.reduce((a, m) => { const x = por[m.id]; return x ? a + x.aberto + x.total - x.pago : a; }, 0);
     return `<section class="secao-inicio" data-secao="${k}">
@@ -1138,7 +1163,7 @@ async function renderFechamentos() {
 
   main.innerHTML = `
     <div class="topo-pagina">
-      <div><h1>Fechamentos</h1><p>Valor em verde = lotes em aberto + o que já foi finalizado (peças ou horas) e ainda não foi pago.</p></div>
+      <div><h1>Fechamentos</h1><p>Mão de obra externa · valor em verde = lotes em aberto + o que já foi finalizado e ainda não foi pago.</p></div>
     </div>
     <div class="barra-periodo">
       <div class="seg">${Object.entries(FREQUENCIAS).map(([k, t]) => `<button class="${k === tipoFech ? "ativo" : ""}" data-tipo="${k}">${t}</button>`).join("")}</div>
@@ -1155,7 +1180,9 @@ async function renderFechamentos() {
       <div class="kpi-v2"><span>Finalizado no período</span><strong>${moeda(tot.total)}</strong></div>
       <div class="kpi-v2"><span>Já pago</span><strong>${moeda(tot.pago)}</strong></div>
     </div>
-    ${maos.length ? secao("externa") + secao("interna") : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
+    ${maos.length ? secao("externa") : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}
+    <p class="muted small">Os funcionários são pagos pela <button class="link" id="irFolha">Folha de pagamento</button>.</p>`;
+  $("#irFolha").onclick = () => irPara("folha");
 
   $$("[data-tipo]", main).forEach((b) => (b.onclick = () => { tipoFech = b.dataset.tipo; renderFechamentos(); }));
   $("#perAnt").onclick = () => { refFech = periodoAnterior(p).inicio; renderFechamentos(); };
@@ -1258,7 +1285,7 @@ async function renderAdmin(pre = {}) {
       <div class="tipo-topo"><strong>${TIPOS[k]}</strong>
         <label class="switch" title="Ativar / desativar"><input type="checkbox" data-mod="${k}" ${moduloAtivo(k) ? "checked" : ""}><span></span></label></div>
       <p>${desc}</p>
-      ${k === "fixos" ? `<div class="tipo-nota">Salário mensal · sem login · não entra nos fechamentos</div>` : `<label class="mini">Forma de pagamento padrão</label>${seg(k)}`}
+      ${k === "funcionarios" ? `<div class="tipo-nota">Mensal: salário + horas extras, sem login · Por hora: com login · pagos pela Folha</div>` : `<label class="mini">Forma de pagamento padrão</label>${seg(k)}`}
     </div>`;
 
   main.innerHTML = `
@@ -1269,8 +1296,7 @@ async function renderAdmin(pre = {}) {
         A forma de pagamento padrão vale para cadastros novos — dá para mudar pessoa por pessoa.</p>
       <div class="tipos-grade">
         ${tipoCard("externa", "Quem leva o serviço para fazer em casa e devolve em lotes.")}
-        ${tipoCard("interna", "Quem trabalha dentro da fábrica.")}
-        ${tipoCard("fixos", "Funcionários registrados, com salário fixo.")}
+        ${tipoCard("funcionarios", "Quem trabalha na fábrica. Cada um recebe por salário mensal ou por hora (escolha no cadastro).")}
       </div>
       <div class="linha" style="grid-template-columns:minmax(180px,260px) auto;align-items:end;margin:.9rem 0 0">
         <div><label>Valor da hora padrão (R$)</label><input id="valorHoraPadrao" type="number" min="0" step="0.01" value="${numConf("valor_hora_padrao") ?? ""}" placeholder="Ex.: 12,00"></div>
@@ -1416,7 +1442,7 @@ function ligarTipos() {
     const btn = ev.currentTarget;
     const linhas = [];
     $$("[data-mod]", main).forEach((c) => linhas.push({ chave: `modulo_${c.dataset.mod}`, valor: c.checked ? "sim" : "nao" }));
-    ["externa", "interna"].forEach((k) => linhas.push({ chave: `pag_padrao_${k}`, valor: $(`[name=padrao_${k}]:checked`, main)?.value || "producao" }));
+    ["externa"].forEach((k) => linhas.push({ chave: `pag_padrao_${k}`, valor: $(`[name=padrao_${k}]:checked`, main)?.value || "producao" }));
     const vh = $("#valorHoraPadrao").value;
     if (vh !== "" && Number(vh) < 0) return aviso("O valor da hora não pode ser negativo.", true);
     linhas.push({ chave: "valor_hora_padrao", valor: vh === "" ? null : String(Number(vh)) });
@@ -1782,4 +1808,742 @@ async function baixarCopia() {
 }
 
 // ---------------------------------------------------------------
+
+// ===============================================================
+// VERSÃO 7 — funcionários, folha, gastos, equipamentos, relatórios
+// ===============================================================
+const dt = (iso) => new Date(`${String(iso).slice(0, 10)}T12:00:00`);
+const fimDoMes = (iso) => fimMes(dt(iso));
+const addMes = (iso, n) => { const d = dt(iso); return inicioMes(new Date(d.getFullYear(), d.getMonth() + n, 1)); };
+const agoraIso = () => new Date().toISOString();
+const lixeira = (attr, rotulo = "Excluir") => `<button type="button" class="btn-lixo" ${attr} title="${rotulo}" aria-label="${rotulo}">${icone("lixo")}</button>`;
+const navMes = (id, mes) => `<div class="nav-periodo">
+    <button class="btn sec peq" id="${id}Ant" title="Mês anterior" aria-label="Mês anterior">◀</button>
+    <strong>${esc(nomeMes(mes))}</strong>
+    <button class="btn sec peq" id="${id}Seg" title="Próximo mês" aria-label="Próximo mês">▶</button>
+    <button class="btn sec peq" id="${id}Hoje">Hoje</button></div>`;
+const ligarNavMes = (id, get, set, depois) => {
+  $(`#${id}Ant`).onclick = () => { set(addMes(get(), -1)); depois(); };
+  $(`#${id}Seg`).onclick = () => { set(addMes(get(), 1)); depois(); };
+  $(`#${id}Hoje`).onclick = () => { set(inicioMes()); depois(); };
+};
+const baixarCsv = (nome, cab, linhas) => {
+  const c = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const txt = "﻿" + [cab, ...linhas].map((l) => l.map(c).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/csv;charset=utf-8" }));
+  a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+};
+
+// Funcionários: mensais (sem login) + por hora (com login)
+async function carregarFuncionarios(incluirExcluidos = false) {
+  const [fixos, maos] = await Promise.all([q(sb.from("funcionarios_fixos").select("*").order("nome")), carregarMaos(false)]);
+  const lista = [
+    ...fixos.map((f) => ({ chave: `f${f.id}`, tipo: "mensal", id: f.id, nome: f.nome, cargo: f.cargo, salario: f.salario,
+      valor_hora_extra: f.valor_hora_extra, whatsapp: f.whatsapp, pix: f.pix, endereco: f.endereco, ativo: f.ativo, excluido_em: f.excluido_em, reg: f })),
+    ...maos.filter(ehFuncHora).map((m) => ({ chave: `p${m.id}`, tipo: "hora", id: m.id, nome: m.nome, cargo: m.cargo, valor_hora: m.valor_hora,
+      valor_hora_extra: m.valor_hora_extra, whatsapp: m.whatsapp, pix: m.pix, endereco: m.endereco, ativo: m.ativo, usuario: m.usuario,
+      excluido_em: m.excluido_em, reg: m })),
+  ].sort((a, b) => a.nome.localeCompare(b.nome));
+  return incluirExcluidos ? lista : lista.filter((x) => !x.excluido_em);
+}
+const recebeTxt = (p) => (p.tipo === "mensal" ? `Mensal · ${p.salario != null ? moeda(p.salario) : "salário não informado"}`
+  : `Por hora · ${valorHoraDe(p) != null ? moeda(valorHoraDe(p)) : "valor não informado"}`);
+const linhaDaFolha = (linhas, p) => (Array.isArray(linhas) ? linhas : [])
+  .find((r) => (p.tipo === "mensal" ? r.fixo_id == p.id : r.perfil_id === p.id));
+const LANC = {
+  hora_extra: ["Hora extra", "he"], bonus: ["Bonificação", "bo"], vale: ["Vale", "va"], desconto: ["Desconto", "de"], horas: ["Horas", "hs"],
+};
+
+async function fichaFuncionario(p, mes = inicioMes()) {
+  const fim = fimDoMes(mes);
+  const col = p.tipo === "mensal" ? "fixo_id" : "perfil_id";
+  const [lancs, horas, resumo] = await Promise.all([
+    q(sb.from("folha_lancamentos").select("*").eq(col, p.id).gte("data", mes).lte("data", fim).order("data", { ascending: false })),
+    p.tipo === "hora" ? q(sb.from("v_horas").select("*").eq("mao_de_obra_id", p.id).eq("mes_ref", mes).order("data", { ascending: false })) : Promise.resolve([]),
+    rpc("resumo_folha", { p_mes: mes }).catch(() => []),
+  ]);
+  const r = linhaDaFolha(resumo, p) || {};
+  const pago = !!r.folha_pagamento_id;
+  const itens = [
+    ...horas.map((h) => ({ k: "horas", id: h.id, data: h.data, desc: h.observacao, base: `${inteiro(h.horas)} h × ${moeda(h.valor_hora)}`, valor: h.valor, travado: h.pago })),
+    ...lancs.map((l) => ({ k: l.tipo, id: l.id, data: l.data, desc: l.descricao,
+      base: l.tipo === "hora_extra" ? `${inteiro(l.horas)} h × ${moeda(l.valor_hora)}` : "", valor: l.valor, travado: !!l.folha_pagamento_id })),
+  ].sort((a, b) => (a.data < b.data ? 1 : -1));
+  const neg = (k) => k === "vale" || k === "desconto";
+  const m = abrirModal({
+    titulo: maiusc(p.nome),
+    largo: true,
+    conteudo: `
+      <div class="ficha-topo">
+        <div class="ficha-contato">
+          <span class="selo parcial">Funcionário · ${recebeTxt(p)}</span>${p.cargo ? ` <span class="small muted">${esc(p.cargo)}</span>` : ""}<br>
+          ${p.valor_hora_extra != null ? `Hora extra: <strong>${moeda(p.valor_hora_extra)}</strong><br>` : ""}
+          ${p.whatsapp ? `📱 <a href="${linkWhats(p.whatsapp)}" target="_blank" rel="noopener">${esc(p.whatsapp)}</a><br>` : ""}
+          ${p.pix ? `PIX: <strong>${esc(p.pix)}</strong>` : ""}
+        </div>
+        <div class="acoes" style="margin:0">
+          <button type="button" class="btn sec peq" id="ffEditar">Editar</button>
+          <button type="button" class="btn perigo peq" id="ffExcluir">Excluir</button>
+        </div>
+      </div>
+      <div class="ff-mes">
+        <button type="button" class="btn sec peq" id="ffAnt" aria-label="Mês anterior">◀</button>
+        <strong>${esc(nomeMes(mes))}</strong>
+        <button type="button" class="btn sec peq" id="ffSeg" aria-label="Próximo mês">▶</button>
+        ${pago ? selo("pago", `Pago em ${dataBR(r.pago_em)}`) : ""}
+      </div>
+      ${pago ? "" : `<div class="acoes" style="margin:.2rem 0 .6rem">
+        ${p.tipo === "hora" ? `<button type="button" class="btn acento peq" data-novo="horas">⏱ Lançar horas</button>` : ""}
+        <button type="button" class="btn ${p.tipo === "hora" ? "sec" : "acento"} peq" data-novo="hora_extra">＋ Hora extra</button>
+        <button type="button" class="btn sec peq" data-novo="bonus">＋ Bonificação</button>
+        <button type="button" class="btn sec peq" data-novo="vale">＋ Vale</button>
+        <button type="button" class="btn sec peq" data-novo="desconto">＋ Desconto</button>
+      </div>`}
+      ${itens.length ? `<ul class="lista-final">${itens.map((i) => `<li>
+        <span>${diaMes(i.data)} <span class="chip-lanc ${LANC[i.k][1]}">${LANC[i.k][0]}</span>
+          ${i.base ? `<span class="small">${i.base}</span>` : ""}${i.desc ? `<br><span class="small muted">${esc(i.desc)}</span>` : ""}</span>
+        <span style="white-space:nowrap;display:flex;gap:.5rem;align-items:center"><strong class="num ${neg(i.k) ? "neg" : ""}">${neg(i.k) ? "− " : ""}${moeda(i.valor)}</strong>
+          ${i.travado ? "" : lixeira(`data-exl="${i.k}:${i.id}"`, "Excluir lançamento")}</span></li>`).join("")}</ul>`
+        : `<p class="muted">Nenhum lançamento neste mês.</p>`}
+      <div class="ff-resumo">
+        <div>${p.tipo === "mensal" ? "Salário" : `Horas (${inteiro(r.horas)} h)`}<strong>${moeda(p.tipo === "mensal" ? r.salario : r.valor_horas)}</strong></div>
+        <div>Horas extras<strong>${moeda(r.valor_extras)}</strong></div>
+        <div>Bonificações<strong>${moeda(r.bonus)}</strong></div>
+        <div>Vales e descontos<strong class="neg">− ${moeda(Number(r.vales || 0) + Number(r.descontos || 0))}</strong></div>
+        <div class="liq">A receber<strong>${moeda(r.liquido)}</strong></div>
+      </div>
+      <div class="acoes">
+        ${pago ? `<button type="button" class="btn sec peq" id="ffDesfazer">Desfazer pagamento</button>`
+          : `<button type="button" class="btn ok" id="ffPagar">✓ Marcar ${moeda(r.liquido)} como pago</button>`}
+        <button type="button" class="btn sec peq" id="ffHolerite">🖨️ Holerite</button>
+      </div>`,
+  });
+  const f = m.form;
+  const reabrir = (novoMes = mes) => { m.fechar(); fichaFuncionario(p, novoMes); atualizarAba(); };
+  $("#ffAnt", f).onclick = () => reabrir(addMes(mes, -1));
+  $("#ffSeg", f).onclick = () => reabrir(addMes(mes, 1));
+  $("#ffEditar", f).onclick = () => { m.fechar(); modalFuncionario(p, () => atualizarAba()); };
+  $("#ffExcluir", f).onclick = async () => { if (await excluirFuncionario(p)) { m.fechar(); atualizarAba(); } };
+  $$("[data-novo]", f).forEach((b) => (b.onclick = () => {
+    m.fechar();
+    if (b.dataset.novo === "horas") return modalLancarHoras(p.id);
+    modalLancFolha(p, b.dataset.novo, mes);
+  }));
+  $$("[data-exl]", f).forEach((b) => (b.onclick = async () => {
+    const [k, id] = b.dataset.exl.split(":");
+    if (!(await confirmar("Excluir este lançamento?", "Excluir"))) return;
+    try {
+      if (k === "horas") await rpc("excluir_horas", { p_id: Number(id) });
+      else await q(sb.from("folha_lancamentos").delete().eq("id", id));
+      aviso("Lançamento excluído."); reabrir();
+    } catch (e) { aviso(e.message, true); }
+  }));
+  $("#ffPagar", f)?.addEventListener("click", async () => {
+    if (!(await confirmar(`Marcar ${moeda(r.liquido)} de ${p.nome} (${nomeMes(mes)}) como pago? Os lançamentos do mês ficam travados.`, "Marcar como pago"))) return;
+    try { await rpc("pagar_folha", { p_mes: mes, p_fixo: p.tipo === "mensal" ? p.id : null, p_perfil: p.tipo === "hora" ? p.id : null }); aviso("Pagamento registrado!"); reabrir(); }
+    catch (e) { aviso(e.message, true); }
+  });
+  $("#ffDesfazer", f)?.addEventListener("click", async () => {
+    if (!(await confirmar("Desfazer este pagamento? Os lançamentos voltam a poder ser alterados.", "Desfazer"))) return;
+    try { await rpc("desfazer_folha", { p_id: r.folha_pagamento_id }); aviso("Pagamento desfeito."); reabrir(); }
+    catch (e) { aviso(e.message, true); }
+  });
+  $("#ffHolerite", f).onclick = () => imprimirHolerite({ ...r, nome: p.nome, cargo: p.cargo, forma: p.tipo, pix: p.pix }, mes);
+}
+// Recarrega a página que estiver aberta por trás da ficha
+const atualizarAba = () => { if (["inicio", "folha", "maos"].includes(abaAtual)) render(); };
+
+function modalLancFolha(p, tipo, mes = inicioMes()) {
+  const ehExtra = tipo === "hora_extra";
+  const hoje = isoLocal();
+  const dataPadrao = hoje >= mes && hoje <= fimDoMes(mes) ? hoje : mes;
+  abrirModal({
+    titulo: `${LANC[tipo][0]} — ${p.nome}`,
+    conteudo: `
+      <div class="linha">
+        <div><label>Dia *</label><input name="data" type="date" value="${dataPadrao}" required></div>
+        ${ehExtra ? `<div><label>Horas extras *</label><input name="horas" type="number" min="0.25" max="24" step="0.25" inputmode="decimal" required placeholder="Ex.: 2 ou 1,5"></div>
+          <div><label>Valor da hora extra (R$) *</label><input name="vh" type="number" min="0" step="0.01" inputmode="decimal" value="${p.valor_hora_extra ?? ""}" required></div>`
+        : `<div><label>Valor (R$) *</label><input name="valor" type="number" min="0.01" step="0.01" inputmode="decimal" required></div>`}
+      </div>
+      <div class="linha"><div><label>Descrição (opcional)</label><input name="desc" placeholder="${{ hora_extra: "Ex.: sábado", bonus: "Ex.: meta de produção", vale: "Ex.: adiantamento", desconto: "Ex.: 1 falta" }[tipo]}"></div></div>
+      ${ehExtra ? `<div class="lote-total" style="margin:0 0 .8rem"><span>Total</span><span id="prevLanc">R$ 0,00</span></div>` : ""}
+      ${tipo === "vale" || tipo === "desconto" ? `<p class="muted small" style="margin-top:-.2rem">Este valor é <strong>descontado</strong> do que ${esc(p.nome.split(" ")[0])} tem a receber no mês.</p>` : ""}
+      <button type="submit" class="btn bloco acento">Lançar</button>`,
+    aoAbrir: (f) => {
+      if (!ehExtra) return;
+      const prev = () => ($("#prevLanc", f).textContent = moeda(Number(f.horas.value || 0) * Number(f.vh.value || 0)));
+      f.horas.oninput = f.vh.oninput = prev;
+    },
+    onSubmit: async (fd) => {
+      const d = { data: fd.get("data") || hoje, tipo, descricao: String(fd.get("desc") || "").trim() || null };
+      d[p.tipo === "mensal" ? "fixo_id" : "perfil_id"] = p.id;
+      if (ehExtra) {
+        const h = Number(fd.get("horas")), vh = Number(fd.get("vh"));
+        if (!(h > 0 && h <= 24)) throw new Error("Informe as horas extras.");
+        if (fd.get("vh") === "" || vh < 0) throw new Error("Informe o valor da hora extra.");
+        Object.assign(d, { horas: h, valor_hora: vh, valor: Math.round(h * vh * 100) / 100 });
+      } else {
+        const v = Number(fd.get("valor"));
+        if (!(v > 0)) throw new Error("Informe o valor.");
+        d.valor = v;
+      }
+      await q(sb.from("folha_lancamentos").insert(d));
+      aviso("Lançado!");
+      fichaFuncionario(p, addMes(d.data, 0));
+      atualizarAba();
+    },
+  });
+}
+
+function modalFuncionario(p = null, depois = () => render()) {
+  const novo = !p;
+  const forma = p?.tipo || "mensal";
+  abrirModal({
+    titulo: novo ? "Cadastrar funcionário" : `Editar ${p.nome}`,
+    conteudo: `
+      <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(p?.nome)}" required></div></div>
+      ${novo ? `<label>Como recebe *</label>
+        <div class="seg seg-radio" style="margin-bottom:.9rem">
+          <label><input type="radio" name="forma" value="mensal" checked><span>Salário mensal</span></label>
+          <label><input type="radio" name="forma" value="hora"><span>Por hora</span></label>
+        </div>` : `<input type="hidden" name="forma" value="${forma}"><p class="small"><strong>Recebe:</strong> ${forma === "mensal" ? "salário mensal" : "por hora"}
+          <span class="muted">(para mudar, exclua e cadastre de novo)</span></p>`}
+      <div class="linha">
+        <div><label>Cargo / função</label><input name="cargo" value="${esc(p?.cargo)}" placeholder="Ex.: Cortador"></div>
+        <div class="so-mensal"><label>Salário mensal (R$) *</label><input name="salario" type="number" min="0" step="0.01" value="${p?.salario ?? ""}"></div>
+        <div class="so-hora"><label>Valor da hora (R$) *</label><input name="valor_hora" type="number" min="0" step="0.01" value="${p?.valor_hora ?? ""}"></div>
+        <div><label>Valor da hora extra (R$)</label><input name="valor_hora_extra" type="number" min="0" step="0.01" value="${p?.valor_hora_extra ?? ""}"></div>
+      </div>
+      <div class="linha">
+        <div><label>WhatsApp</label><input name="whatsapp" value="${esc(p?.whatsapp)}" inputmode="tel" placeholder="(11) 99999-9999"></div>
+        <div><label>Chave PIX</label><input name="pix" value="${esc(p?.pix)}"></div>
+      </div>
+      <div class="linha"><div><label>Endereço</label><input name="endereco" value="${esc(p?.endereco)}"></div></div>
+      ${novo ? `<div class="linha so-hora">
+        <div><label>Usuário (login) *</label><input name="usuario" autocapitalize="none" placeholder="ex.: carla"></div>
+        <div><label>Senha inicial *</label><input name="senha" minlength="6" placeholder="mín. 6 caracteres"></div>
+      </div>` : ""}
+      <p class="muted small so-mensal">Salário mensal: sem login. O Bruno lança horas extras, bonificações, vales e descontos.</p>
+      <p class="muted small so-hora">Por hora: a pessoa entra no painel pelo celular e vê as horas dela.</p>
+      <button type="submit" class="btn bloco">${novo ? "Cadastrar" : "Salvar"}</button>`,
+    aoAbrir: (f) => {
+      const mostrar = () => {
+        const v = $("[name=forma]:checked", f)?.value || f.forma.value;
+        $$(".so-mensal", f).forEach((x) => x.classList.toggle("hidden", v !== "mensal"));
+        $$(".so-hora", f).forEach((x) => x.classList.toggle("hidden", v !== "hora"));
+      };
+      $$("[name=forma]", f).forEach((x) => (x.onchange = mostrar));
+      mostrar();
+    },
+    onSubmit: async (fd) => {
+      const nome = String(fd.get("nome") || "").trim();
+      const fm = fd.get("forma");
+      const num = (k) => (fd.get(k) === "" || fd.get(k) == null ? null : Number(fd.get(k)));
+      if (!nome) throw new Error("Informe o nome.");
+      const comum = { nome, cargo: fd.get("cargo") || null, valor_hora_extra: num("valor_hora_extra"),
+        whatsapp: fd.get("whatsapp") || null, pix: fd.get("pix") || null, endereco: fd.get("endereco") || null };
+      if (fm === "mensal") {
+        if (num("salario") == null) throw new Error("Informe o salário mensal.");
+        const d = { ...comum, salario: num("salario") };
+        if (novo) await q(sb.from("funcionarios_fixos").insert(d));
+        else await q(sb.from("funcionarios_fixos").update(d).eq("id", p.id));
+      } else {
+        if (num("valor_hora") == null) throw new Error("Informe o valor da hora.");
+        const d = { ...comum, valor_hora: num("valor_hora"), tipo: "interna", forma_pagamento: "hora" };
+        if (novo) {
+          const usuario = String(fd.get("usuario") || "").trim();
+          if (!usuario || String(fd.get("senha") || "").length < 6) throw new Error("Informe o usuário e uma senha com pelo menos 6 caracteres.");
+          const criado = await adminUsuarios({ acao: "criar", nome, usuario, senha: fd.get("senha"), whatsapp: comum.whatsapp, pix: comum.pix, endereco: comum.endereco });
+          if (criado?.id) await q(sb.from("perfis").update({ ...d, frequencia_pagamento: "mensal" }).eq("id", criado.id));
+          aviso(`Funcionário cadastrado! Usuário: ${usuario.toLowerCase()}`);
+          return depois();
+        }
+        await q(sb.from("perfis").update(d).eq("id", p.id));
+      }
+      aviso(novo ? "Funcionário cadastrado!" : "Salvo!");
+      depois();
+    },
+  });
+}
+
+// Exclui sem apagar o histórico (lotes, horas e pagamentos continuam nos relatórios)
+async function excluirFuncionario(p) {
+  if (!(await confirmar(`Excluir ${p.nome}? A pessoa sai das listas${p.tipo === "hora" ? " e perde o acesso ao painel" : ""}. O histórico de pagamentos fica guardado.`, "Excluir"))) return false;
+  try {
+    if (p.tipo === "mensal") await q(sb.from("funcionarios_fixos").update({ excluido_em: agoraIso(), ativo: false }).eq("id", p.id));
+    else await excluirPerfil(p.reg, false);
+    aviso(`${p.nome} foi excluído(a).`);
+    return true;
+  } catch (e) { aviso(e.message, true); return false; }
+}
+async function excluirPerfil(m, perguntar = true) {
+  if (perguntar && !(await confirmar(`Excluir ${m.nome}? Ela sai das listas e do Início e perde o acesso ao painel. O histórico (lotes, entregas e pagamentos) fica guardado nos fechamentos e relatórios.`, "Excluir"))) return false;
+  if (m.ativo) { try { await adminUsuarios({ acao: "desativar", id: m.id }); } catch { /* segue mesmo assim */ } }
+  await q(sb.from("perfis").update({ excluido_em: agoraIso(), ativo: false }).eq("id", m.id));
+  return true;
+}
+
+// ---------------------------------------------------------------
+// FOLHA DE PAGAMENTO
+// ---------------------------------------------------------------
+let mesFolha = inicioMes();
+async function renderFolha() {
+  const [res, funcs] = await Promise.all([rpc("resumo_folha", { p_mes: mesFolha }), carregarFuncionarios(true)]);
+  const L = Array.isArray(res) ? res : [];
+  const t = (k) => L.reduce((a, r) => a + Number(r[k] || 0), 0);
+  const pendentes = L.filter((r) => !r.folha_pagamento_id);
+  const pessoa = (r) => funcs.find((x) => (r.fixo_id != null ? x.chave === `f${r.fixo_id}` : x.chave === `p${r.perfil_id}`));
+  main.innerHTML = `
+    <div class="topo-pagina"><div><h1>Folha de pagamento</h1><p>Funcionários · salário ou horas, horas extras, bonificações, vales e descontos.</p></div>
+      <div class="topo-acoes">${navMes("fo", mesFolha)}</div></div>
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Total líquido da folha</span><strong>${moeda(t("liquido"))}</strong><small>${L.length} funcionário${L.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>Salários e horas</span><strong>${moeda(t("salario") + t("valor_horas"))}</strong><small>base do mês</small></div>
+      <div class="kpi-v2"><span>Horas extras + bônus</span><strong>${moeda(t("valor_extras") + t("bonus"))}</strong><small>${inteiro(t("horas_extras"))} h extras</small></div>
+      <div class="kpi-v2"><span>Vales e descontos</span><strong>− ${moeda(t("vales") + t("descontos"))}</strong><small>descontados</small></div>
+    </div>
+    ${L.length ? `<div class="card tabela-wrap"><table>
+      <thead><tr><th>Funcionário</th><th class="right">Salário / horas</th><th class="right">Horas extras</th><th class="right">Bonificações</th><th class="right">Vales e descontos</th><th class="right">Líquido</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${L.map((r, i) => `<tr>
+        <td><button class="link" data-ficha-f="${i}"><strong>${esc(r.nome)}</strong></button><br><span class="small muted">${r.forma === "mensal" ? "Mensal" : "Por hora"}${r.cargo ? ` · ${esc(r.cargo)}` : ""}</span></td>
+        <td class="right num">${r.forma === "mensal" ? moeda(r.salario) : `${inteiro(r.horas)} h · ${moeda(r.valor_horas)}`}</td>
+        <td class="right num">${Number(r.valor_extras) ? `${moeda(r.valor_extras)}<br><span class="small muted">${inteiro(r.horas_extras)} h</span>` : "—"}</td>
+        <td class="right num">${Number(r.bonus) ? moeda(r.bonus) : "—"}</td>
+        <td class="right num neg">${Number(r.vales) + Number(r.descontos) ? `− ${moeda(Number(r.vales) + Number(r.descontos))}` : "—"}</td>
+        <td class="right num"><strong>${moeda(r.liquido)}</strong></td>
+        <td>${r.folha_pagamento_id ? selo("pago", "Pago") : selo("aberto", "A pagar")}</td>
+        <td class="right" style="white-space:nowrap">
+          <button class="btn sec peq" data-holerite="${i}">Holerite</button>
+          ${r.folha_pagamento_id ? `<button class="btn sec peq" data-desf="${i}">Desfazer</button>` : `<button class="btn ok peq" data-pagar="${i}">Pagar</button>`}
+        </td></tr>`).join("")}</tbody>
+      <tfoot><tr><td>Total</td><td class="right num">${moeda(t("salario") + t("valor_horas"))}</td><td class="right num">${moeda(t("valor_extras"))}</td>
+        <td class="right num">${moeda(t("bonus"))}</td><td class="right num">− ${moeda(t("vales") + t("descontos"))}</td><td class="right num">${moeda(t("liquido"))}</td><td colspan="2"></td></tr></tfoot>
+    </table></div>
+    <div class="acoes">
+      ${pendentes.length ? `<button class="btn ok" id="foTodos">✓ Marcar todos (${pendentes.length}) como pagos</button>` : ""}
+      <button class="btn sec" id="foImprimir">🖨️ Imprimir folha</button>
+      <button class="btn sec" id="foCsv">Baixar planilha (CSV)</button>
+      <button class="btn sec" id="foNovo">＋ Cadastrar funcionário</button>
+    </div>`
+    : `<div class="card vazio">Nenhum funcionário neste mês. <button class="link" id="foNovo">Cadastrar funcionário</button></div>`}`;
+
+  ligarNavMes("fo", () => mesFolha, (v) => (mesFolha = v), renderFolha);
+  $("#foNovo")?.addEventListener("click", () => modalFuncionario(null, renderFolha));
+  $$("[data-ficha-f]", main).forEach((b) => (b.onclick = () => { const p = pessoa(L[b.dataset.fichaF]); if (p) fichaFuncionario(p, mesFolha); }));
+  $$("[data-holerite]", main).forEach((b) => (b.onclick = () => imprimirHolerite(L[b.dataset.holerite], mesFolha)));
+  const pagar = async (r) => rpc("pagar_folha", { p_mes: mesFolha, p_fixo: r.fixo_id ?? null, p_perfil: r.perfil_id ?? null });
+  $$("[data-pagar]", main).forEach((b) => (b.onclick = async () => {
+    const r = L[b.dataset.pagar];
+    if (!(await confirmar(`Marcar ${moeda(r.liquido)} de ${r.nome} como pago?`, "Marcar como pago"))) return;
+    try { await pagar(r); aviso("Pagamento registrado!"); renderFolha(); } catch (e) { aviso(e.message, true); }
+  }));
+  $$("[data-desf]", main).forEach((b) => (b.onclick = async () => {
+    const r = L[b.dataset.desf];
+    if (!(await confirmar(`Desfazer o pagamento de ${r.nome}?`, "Desfazer"))) return;
+    try { await rpc("desfazer_folha", { p_id: r.folha_pagamento_id }); aviso("Pagamento desfeito."); renderFolha(); } catch (e) { aviso(e.message, true); }
+  }));
+  $("#foTodos")?.addEventListener("click", async () => {
+    if (!(await confirmar(`Marcar ${pendentes.length} funcionário(s) como pagos, somando ${moeda(pendentes.reduce((a, r) => a + Number(r.liquido), 0))}?`, "Marcar todos"))) return;
+    try { for (const r of pendentes) await pagar(r); aviso("Folha paga!"); } catch (e) { aviso(e.message, true); }
+    renderFolha();
+  });
+  $("#foImprimir")?.addEventListener("click", () => imprimirFolha(L, mesFolha));
+  $("#foCsv")?.addEventListener("click", () => baixarCsv(`folha-${mesFolha.slice(0, 7)}.csv`,
+    ["Funcionário", "Forma", "Cargo", "Salário", "Horas", "Valor horas", "Horas extras", "Valor extras", "Bonificações", "Vales", "Descontos", "Líquido", "Pago?"],
+    L.map((r) => [r.nome, r.forma === "mensal" ? "Mensal" : "Por hora", r.cargo, r.salario, r.horas, r.valor_horas, r.horas_extras, r.valor_extras, r.bonus, r.vales, r.descontos, r.liquido, r.folha_pagamento_id ? "Sim" : "Não"]
+      .map((v) => (typeof v === "number" ? String(v).replace(".", ",") : v)))));
+}
+
+function janelaImpressao(titulo, corpo) {
+  const w = window.open("", "_blank");
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
+    <link rel="stylesheet" href="${new URL("css/style.css", location.href)}"></head><body style="background:#fff;padding:1.5rem">${corpo}
+    <script>setTimeout(()=>print(),300)<\/script></body></html>`);
+  w.document.close();
+}
+function imprimirHolerite(r, mes) {
+  const linha = (a, b, neg) => `<tr><td>${a}</td><td class="right">${neg ? "− " : ""}${moeda(b)}</td></tr>`;
+  janelaImpressao(`Holerite ${r.nome} ${nomeMes(mes)}`, `
+    <h1>${esc(NOME_FABRICA)} — Holerite</h1>
+    <p><strong>Funcionário:</strong> ${esc(r.nome)}${r.cargo ? ` · ${esc(r.cargo)}` : ""}<br><strong>Mês:</strong> ${esc(nomeMes(mes))}
+      ${r.pix ? `<br><strong>PIX:</strong> ${esc(r.pix)}` : ""}</p>
+    <table><thead><tr><th>Descrição</th><th class="right">Valor</th></tr></thead><tbody>
+      ${r.forma === "mensal" ? linha("Salário mensal", r.salario) : linha(`Horas trabalhadas (${inteiro(r.horas)} h)`, r.valor_horas)}
+      ${Number(r.valor_extras) ? linha(`Horas extras (${inteiro(r.horas_extras)} h)`, r.valor_extras) : ""}
+      ${Number(r.bonus) ? linha("Bonificações", r.bonus) : ""}
+      ${Number(r.vales) ? linha("Vales / adiantamentos", r.vales, true) : ""}
+      ${Number(r.descontos) ? linha("Descontos", r.descontos, true) : ""}
+    </tbody><tfoot><tr><td>Líquido a receber</td><td class="right">${moeda(r.liquido)}</td></tr></tfoot></table>
+    <p style="margin-top:2.5rem">Recebi a importância de <strong>${moeda(r.liquido)}</strong> referente a ${esc(nomeMes(mes).toLowerCase())}.</p>
+    <p style="margin-top:3rem">_______________________________________<br>${esc(r.nome)}</p>`);
+}
+function imprimirFolha(L, mes) {
+  janelaImpressao(`Folha ${nomeMes(mes)}`, `
+    <h1>${esc(NOME_FABRICA)} — Folha de pagamento</h1><p><strong>Mês:</strong> ${esc(nomeMes(mes))}</p>
+    <table><thead><tr><th>Funcionário</th><th class="right">Salário / horas</th><th class="right">Extras</th><th class="right">Bônus</th><th class="right">Vales e desc.</th><th class="right">Líquido</th><th>Situação</th></tr></thead>
+    <tbody>${L.map((r) => `<tr><td>${esc(r.nome)}</td><td class="right">${moeda(Number(r.salario) + Number(r.valor_horas))}</td><td class="right">${moeda(r.valor_extras)}</td>
+      <td class="right">${moeda(r.bonus)}</td><td class="right">− ${moeda(Number(r.vales) + Number(r.descontos))}</td><td class="right">${moeda(r.liquido)}</td><td>${r.folha_pagamento_id ? "Pago" : "A pagar"}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td><td></td><td></td><td></td><td></td><td class="right">${moeda(L.reduce((a, r) => a + Number(r.liquido), 0))}</td><td></td></tr></tfoot></table>`);
+}
+
+// ---------------------------------------------------------------
+// GASTOS DO MÊS
+// ---------------------------------------------------------------
+const CATEGORIAS = ["Aluguel", "Água", "Luz / energia", "Internet / telefone", "Manutenção", "Material", "Impostos", "Transporte", "Limpeza", "Outros"];
+let mesGastos = inicioMes();
+let filtroGasto = "todos";
+async function renderGastos() {
+  try { await rpc("gerar_gastos_fixos", { p_mes: mesGastos }); } catch { /* sem permissão ou sem fixos */ }
+  const ant = addMes(mesGastos, -1);
+  const [todos, anteriores] = await Promise.all([
+    q(sb.from("gastos").select("*").gte("data", mesGastos).lte("data", fimDoMes(mesGastos)).order("data", { ascending: false })),
+    q(sb.from("gastos").select("valor, cancelado, data").gte("data", ant).lte("data", fimDoMes(ant))),
+  ]);
+  const gastos = todos.filter((g) => !g.cancelado);
+  const total = soma(gastos, "valor"), totalAnt = soma(anteriores.filter((g) => !g.cancelado), "valor");
+  const fixos = gastos.filter((g) => g.gasto_fixo_id), manut = gastos.filter((g) => g.manutencao_id);
+  const lista = filtroGasto === "fixos" ? fixos : filtroGasto === "variaveis" ? gastos.filter((g) => !g.gasto_fixo_id) : gastos;
+  const porCat = {};
+  gastos.forEach((g) => (porCat[g.categoria] = (porCat[g.categoria] || 0) + Number(g.valor)));
+  const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const varTxt = totalAnt ? `${total >= totalAnt ? "+" : "−"} ${Math.abs(Math.round(((total - totalAnt) / totalAnt) * 100))}%` : "—";
+  main.innerHTML = `
+    <div class="topo-pagina"><div><h1>Gastos do mês</h1><p>Aluguel, água, luz, internet, manutenção e material.</p></div>
+      <div class="topo-acoes">${navMes("ga", mesGastos)}<button class="btn sec" id="gaFixos">Gastos fixos</button><button class="btn acento" id="gaNovo">＋ Novo gasto</button></div></div>
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Total de gastos</span><strong>${moeda(total)}</strong><small>${esc(nomeMes(mesGastos).toLowerCase())}</small></div>
+      <div class="kpi-v2"><span>Fixos do mês</span><strong>${moeda(soma(fixos, "valor"))}</strong><small>repetem todo mês</small></div>
+      <div class="kpi-v2"><span>Manutenção</span><strong>${moeda(soma(manut, "valor"))}</strong><small>${manut.length} serviço${manut.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>Comparado ao mês anterior</span><strong>${varTxt}</strong><small>${moeda(totalAnt)} em ${esc(nomeMes(ant).split(" ")[0].toLowerCase())}</small></div>
+    </div>
+    <div class="grade-gastos">
+      <div class="card">
+        <div class="section-head"><h2 style="margin:0">Lançamentos</h2>
+          <div class="seg">${[["todos", "Todos"], ["fixos", "Fixos"], ["variaveis", "Variáveis"]].map(([k, t]) => `<button class="${k === filtroGasto ? "ativo" : ""}" data-fg="${k}">${t}</button>`).join("")}</div></div>
+        ${lista.length ? `<ul class="lista-final">${lista.map((g) => `<li>
+          <span>${diaMes(g.data)} – <strong>${esc(g.descricao)}</strong> <span class="chip-tipo">${esc(g.categoria)}</span>
+            ${g.gasto_fixo_id ? `<span class="small muted">fixo</span>` : ""}${g.observacao ? `<br><span class="small muted">${esc(g.observacao)}</span>` : ""}</span>
+          <span style="white-space:nowrap;display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(g.valor)}</strong>
+            ${g.manutencao_id ? "" : `<button class="btn sec peq" data-edg="${g.id}">Editar</button>`}${lixeira(`data-exg="${g.id}"`, "Excluir gasto")}</span></li>`).join("")}</ul>
+          <div class="soma-final"><span>TOTAL</span><span>${moeda(soma(lista, "valor"))}</span></div>`
+          : `<p class="muted">Nenhum gasto ${filtroGasto === "todos" ? "neste mês" : "neste filtro"}. Clique em <strong>＋ Novo gasto</strong>.</p>`}
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Por categoria</h2>
+        ${cats.length ? cats.map(([c, v]) => `<div class="barra-cat"><span>${esc(c)}</span><strong>${moeda(v)}</strong>
+          <i><b style="width:${Math.max(2, Math.round((v / total) * 100))}%"></b></i></div>`).join("") : `<p class="muted small">Sem gastos ainda.</p>`}
+        <p class="muted small">Gastos <strong>fixos</strong> entram sozinhos todo mês. Mudou o valor da luz? Clique em <strong>Editar</strong> no lançamento do mês.</p>
+      </div>
+    </div>`;
+  ligarNavMes("ga", () => mesGastos, (v) => (mesGastos = v), renderGastos);
+  $$("[data-fg]", main).forEach((b) => (b.onclick = () => { filtroGasto = b.dataset.fg; renderGastos(); }));
+  $("#gaNovo").onclick = () => modalGasto();
+  $("#gaFixos").onclick = () => modalGastosFixos();
+  $$("[data-edg]", main).forEach((b) => (b.onclick = () => modalGasto(gastos.find((g) => g.id == b.dataset.edg))));
+  $$("[data-exg]", main).forEach((b) => (b.onclick = async () => {
+    const g = gastos.find((x) => x.id == b.dataset.exg);
+    if (g.manutencao_id) return aviso("Este gasto veio de uma manutenção. Exclua pela tela de Equipamentos.", true);
+    const txt = g.gasto_fixo_id ? `Excluir "${g.descricao}" só deste mês? Para parar de lançar todo mês, use o botão Gastos fixos.` : `Excluir "${g.descricao}" (${moeda(g.valor)})?`;
+    if (!(await confirmar(txt, "Excluir"))) return;
+    try {
+      if (g.gasto_fixo_id) await q(sb.from("gastos").update({ cancelado: true }).eq("id", g.id));
+      else await q(sb.from("gastos").delete().eq("id", g.id));
+      aviso("Gasto excluído."); renderGastos();
+    } catch (e) { aviso(e.message, true); }
+  }));
+}
+const listaCategorias = () => `<datalist id="listaCat">${CATEGORIAS.map((c) => `<option value="${c}">`).join("")}</datalist>`;
+
+function modalGasto(g = {}) {
+  const hoje = isoLocal();
+  const dataPadrao = g.data || (hoje >= mesGastos && hoje <= fimDoMes(mesGastos) ? hoje : mesGastos);
+  abrirModal({
+    titulo: g.id ? "Editar gasto" : "Novo gasto",
+    conteudo: `
+      <div class="linha">
+        <div><label>Descrição *</label><input name="descricao" value="${esc(g.descricao)}" required placeholder="Ex.: Conta de luz"></div>
+        <div><label>Categoria *</label><input name="categoria" list="listaCat" value="${esc(g.categoria || "")}" required placeholder="Escolha ou escreva">${listaCategorias()}</div>
+      </div>
+      <div class="linha">
+        <div><label>Dia *</label><input name="data" type="date" value="${dataPadrao}" required></div>
+        <div><label>Valor (R$) *</label><input name="valor" type="number" min="0" step="0.01" inputmode="decimal" value="${g.valor ?? ""}" required></div>
+      </div>
+      <div class="linha"><div><label>Observação</label><input name="obs" value="${esc(g.observacao)}"></div></div>
+      ${g.id ? (g.gasto_fixo_id ? `<p class="muted small">Gasto fixo: a mudança vale só para este mês.</p>` : "")
+        : `<label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="fixo" style="width:auto"> Repetir todo mês (gasto fixo, como aluguel)</label>`}
+      <button type="submit" class="btn bloco">Salvar</button>`,
+    onSubmit: async (fd) => {
+      const d = { descricao: String(fd.get("descricao") || "").trim(), categoria: String(fd.get("categoria") || "").trim() || "Outros",
+        data: fd.get("data"), valor: Number(fd.get("valor")), observacao: fd.get("obs") || null };
+      if (!d.descricao || fd.get("valor") === "" || d.valor < 0) throw new Error("Informe a descrição e o valor.");
+      if (g.id) await q(sb.from("gastos").update(d).eq("id", g.id));
+      else if (fd.get("fixo") === "on") {
+        await q(sb.from("gastos_fixos").insert({ descricao: d.descricao, categoria: d.categoria, valor: d.valor, dia: Math.min(28, dt(d.data).getDate()) }));
+        await rpc("gerar_gastos_fixos", { p_mes: addMes(d.data, 0) });
+      } else await q(sb.from("gastos").insert(d));
+      aviso("Gasto salvo!"); renderGastos();
+    },
+  });
+}
+
+async function modalGastosFixos() {
+  const fixos = (await q(sb.from("gastos_fixos").select("*").order("descricao"))).filter((f) => f.ativo);
+  const m = abrirModal({
+    titulo: "Gastos fixos (todo mês)",
+    conteudo: `
+      <p class="muted small" style="margin-top:0">Estes gastos entram sozinhos no começo de cada mês. Mudar o valor aqui vale para os próximos meses.</p>
+      ${fixos.length ? `<ul class="lista-final">${fixos.map((f) => `<li>
+        <span><strong>${esc(f.descricao)}</strong> <span class="chip-tipo">${esc(f.categoria)}</span><br><span class="small muted">todo dia ${f.dia}</span></span>
+        <span style="display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(f.valor)}</strong>
+          <button type="button" class="btn sec peq" data-edf="${f.id}">Editar</button>${lixeira(`data-exf="${f.id}"`, "Parar de lançar")}</span></li>`).join("")}</ul>`
+        : `<p class="muted">Nenhum gasto fixo. Ao lançar um gasto, marque "Repetir todo mês".</p>`}
+      <button type="submit" class="btn bloco sec">Fechar</button>`,
+  });
+  $$("[data-edf]", m.form).forEach((b) => (b.onclick = () => {
+    const f = fixos.find((x) => x.id == b.dataset.edf);
+    m.fechar();
+    abrirModal({
+      titulo: `Editar gasto fixo`,
+      conteudo: `<div class="linha"><div><label>Descrição *</label><input name="descricao" value="${esc(f.descricao)}" required></div>
+          <div><label>Categoria</label><input name="categoria" list="listaCat" value="${esc(f.categoria)}">${listaCategorias()}</div></div>
+        <div class="linha"><div><label>Valor (R$) *</label><input name="valor" type="number" min="0" step="0.01" value="${f.valor}" required></div>
+          <div><label>Dia do mês</label><input name="dia" type="number" min="1" max="28" value="${f.dia}"></div></div>
+        <button type="submit" class="btn bloco">Salvar</button>`,
+      onSubmit: async (fd) => {
+        await q(sb.from("gastos_fixos").update({ descricao: fd.get("descricao"), categoria: fd.get("categoria") || "Outros",
+          valor: Number(fd.get("valor")), dia: Math.min(28, Math.max(1, Number(fd.get("dia")) || 5)) }).eq("id", f.id));
+        aviso("Salvo! Vale a partir do próximo mês."); modalGastosFixos();
+      },
+    });
+  }));
+  $$("[data-exf]", m.form).forEach((b) => (b.onclick = async () => {
+    const f = fixos.find((x) => x.id == b.dataset.exf);
+    if (!(await confirmar(`Parar de lançar "${f.descricao}" todo mês? Os meses já lançados continuam.`, "Parar"))) return;
+    try { await q(sb.from("gastos_fixos").update({ ativo: false }).eq("id", f.id)); aviso("Pronto."); m.fechar(); modalGastosFixos(); }
+    catch (e) { aviso(e.message, true); }
+  }));
+}
+
+// ---------------------------------------------------------------
+// EQUIPAMENTOS
+// ---------------------------------------------------------------
+const SITUACOES = { funcionando: ["Funcionando", "pronto"], manutencao: ["Em manutenção", "aberto"], parado: ["Parado", "cancelado"] };
+let equipSel = null;
+async function renderEquipamentos() {
+  const [todos, manuts] = await Promise.all([
+    q(sb.from("equipamentos").select("*").order("nome")),
+    q(sb.from("manutencoes").select("*").order("data", { ascending: false })),
+  ]);
+  const equips = todos.filter((e) => !e.excluido_em);
+  const ano = String(new Date().getFullYear());
+  const totalDe = (id, soAno) => manuts.filter((m) => m.equipamento_id === id && (!soAno || m.data.startsWith(ano))).reduce((a, m) => a + Number(m.valor), 0);
+  const noAno = manuts.filter((m) => m.data.startsWith(ano) && equips.some((e) => e.id === m.equipamento_id));
+  const caro = equips.map((e) => [e, totalDe(e.id, true)]).sort((a, b) => b[1] - a[1])[0];
+  if (!equips.some((e) => e.id === equipSel)) equipSel = equips[0]?.id ?? null;
+  const sel = equips.find((e) => e.id === equipSel);
+  const hist = sel ? manuts.filter((m) => m.equipamento_id === sel.id) : [];
+  main.innerHTML = `
+    <div class="topo-pagina"><div><h1>Equipamentos</h1><p>Valor de compra e histórico de manutenção de cada máquina.</p></div>
+      <div class="topo-acoes"><button class="btn acento" id="eqNovo">＋ Novo equipamento</button></div></div>
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Valor em equipamentos</span><strong>${moeda(soma(equips, "valor_compra"))}</strong><small>${equips.length} equipamento${equips.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>Manutenção em ${ano}</span><strong>${moeda(soma(noAno, "valor"))}</strong><small>${noAno.length} serviço${noAno.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>Mais caro de manter</span><strong class="kpi-txt">${caro && caro[1] ? esc(caro[0].nome) : "—"}</strong><small>${caro && caro[1] ? `${moeda(caro[1])} em ${ano}` : "sem manutenção no ano"}</small></div>
+      <div class="kpi-v2 ${equips.some((e) => e.situacao !== "funcionando") ? "amarelo" : ""}"><span>Parados ou em manutenção</span><strong>${equips.filter((e) => e.situacao !== "funcionando").length}</strong><small>${esc(equips.filter((e) => e.situacao !== "funcionando").map((e) => e.nome).join(", ") || "todos funcionando")}</small></div>
+    </div>
+    ${equips.length ? `<div class="grade-equip">
+      <div class="lista-equip">${equips.map((e) => `<button class="equip-card ${e.id === equipSel ? "sel" : ""}" data-eq="${e.id}">
+        <span class="eq-topo"><strong>${esc(e.nome)}</strong>${selo(SITUACOES[e.situacao][1], SITUACOES[e.situacao][0])}</span>
+        <span class="small muted">${e.data_compra ? `Comprado em ${dataBR(e.data_compra)}` : "Data de compra não informada"}${e.valor_compra != null ? ` · ${moeda(e.valor_compra)}` : ""}</span>
+        <span class="small">Manutenção total: <strong>${moeda(totalDe(e.id))}</strong></span></button>`).join("")}</div>
+      <div class="card">
+        <div class="section-head" style="align-items:flex-start">
+          <div><h2 style="margin:0">${esc(sel.nome)}</h2><p class="small muted" style="margin:.2rem 0 0">${[sel.modelo, sel.numero_serie ? `nº ${sel.numero_serie}` : ""].filter(Boolean).map(esc).join(" · ") || "&nbsp;"}</p></div>
+          <span style="display:flex;gap:.4rem"><button class="btn sec peq" id="eqEditar">Editar</button>${lixeira('id="eqExcluir"', "Excluir equipamento")}</span>
+        </div>
+        <div class="ff-resumo tres">
+          <div>Valor de compra<strong>${sel.valor_compra != null ? moeda(sel.valor_compra) : "—"}</strong></div>
+          <div>Manutenção total<strong>${moeda(totalDe(sel.id))}</strong></div>
+          <div>Última manutenção<strong>${hist[0] ? dataBR(hist[0].data) : "—"}</strong></div>
+        </div>
+        ${sel.observacao ? `<p class="small">${esc(sel.observacao)}</p>` : ""}
+        <div class="section-head"><h3 style="margin:0">Histórico de manutenção</h3><button class="btn acento peq" id="eqManut">＋ Registrar manutenção</button></div>
+        ${hist.length ? `<ul class="lista-final">${hist.map((h) => `<li><span>${dataBR(h.data)} – <strong>${esc(h.descricao)}</strong>${h.responsavel ? `<br><span class="small muted">${esc(h.responsavel)}</span>` : ""}</span>
+          <span style="display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(h.valor)}</strong>
+            <button class="btn sec peq" data-edm="${h.id}">Editar</button>${lixeira(`data-exm="${h.id}"`, "Excluir manutenção")}</span></li>`).join("")}</ul>`
+          : `<p class="muted">Nenhuma manutenção registrada.</p>`}
+        <p class="muted small">Cada manutenção registrada aqui entra também nos <strong>Gastos do mês</strong>.</p>
+      </div>
+    </div>` : `<div class="card vazio">Nenhum equipamento cadastrado. Clique em <strong>＋ Novo equipamento</strong>.</div>`}`;
+  $("#eqNovo").onclick = () => modalEquip();
+  $$("[data-eq]", main).forEach((b) => (b.onclick = () => { equipSel = Number(b.dataset.eq); renderEquipamentos(); }));
+  if (!sel) return;
+  $("#eqEditar").onclick = () => modalEquip(sel);
+  $("#eqExcluir").onclick = async () => {
+    if (!(await confirmar(`Excluir ${sel.nome}? O histórico de manutenção continua nos gastos.`, "Excluir"))) return;
+    try { await q(sb.from("equipamentos").update({ excluido_em: agoraIso() }).eq("id", sel.id)); equipSel = null; aviso("Equipamento excluído."); renderEquipamentos(); }
+    catch (e) { aviso(e.message, true); }
+  };
+  $("#eqManut").onclick = () => modalManut(sel);
+  $$("[data-edm]", main).forEach((b) => (b.onclick = () => modalManut(sel, hist.find((h) => h.id == b.dataset.edm))));
+  $$("[data-exm]", main).forEach((b) => (b.onclick = async () => {
+    const h = hist.find((x) => x.id == b.dataset.exm);
+    if (!(await confirmar(`Excluir a manutenção "${h.descricao}"? Ela sai também dos gastos do mês.`, "Excluir"))) return;
+    try { await q(sb.from("manutencoes").delete().eq("id", h.id)); aviso("Manutenção excluída."); renderEquipamentos(); }
+    catch (e) { aviso(e.message, true); }
+  }));
+}
+function modalEquip(e = {}) {
+  abrirModal({
+    titulo: e.id ? `Editar ${e.nome}` : "Novo equipamento",
+    conteudo: `
+      <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(e.nome)}" required placeholder="Ex.: Bordadeira Tajima 6 cabeças"></div></div>
+      <div class="linha">
+        <div><label>Modelo / marca</label><input name="modelo" value="${esc(e.modelo)}"></div>
+        <div><label>Nº de série</label><input name="numero_serie" value="${esc(e.numero_serie)}"></div>
+      </div>
+      <div class="linha">
+        <div><label>Data da compra</label><input name="data_compra" type="date" value="${e.data_compra ?? ""}"></div>
+        <div><label>Valor da compra (R$)</label><input name="valor_compra" type="number" min="0" step="0.01" value="${e.valor_compra ?? ""}"></div>
+        <div><label>Situação</label><select name="situacao">${Object.entries(SITUACOES).map(([k, [t]]) => `<option value="${k}" ${(e.situacao || "funcionando") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      </div>
+      <div class="linha"><div><label>Observação</label><input name="observacao" value="${esc(e.observacao)}"></div></div>
+      <button type="submit" class="btn bloco">Salvar</button>`,
+    onSubmit: async (fd) => {
+      const d = { nome: String(fd.get("nome") || "").trim(), modelo: fd.get("modelo") || null, numero_serie: fd.get("numero_serie") || null,
+        data_compra: fd.get("data_compra") || null, valor_compra: fd.get("valor_compra") === "" ? null : Number(fd.get("valor_compra")),
+        situacao: fd.get("situacao"), observacao: fd.get("observacao") || null };
+      if (!d.nome) throw new Error("Informe o nome do equipamento.");
+      if (e.id) await q(sb.from("equipamentos").update(d).eq("id", e.id));
+      else await q(sb.from("equipamentos").insert(d));
+      aviso("Equipamento salvo!"); renderEquipamentos();
+    },
+  });
+}
+function modalManut(e, h = {}) {
+  abrirModal({
+    titulo: h.id ? "Editar manutenção" : `Manutenção — ${e.nome}`,
+    conteudo: `
+      <div class="linha">
+        <div><label>Dia *</label><input name="data" type="date" value="${h.data || isoLocal()}" required></div>
+        <div><label>Valor (R$) *</label><input name="valor" type="number" min="0" step="0.01" inputmode="decimal" value="${h.valor ?? ""}" required></div>
+      </div>
+      <div class="linha"><div><label>O que foi feito *</label><input name="descricao" value="${esc(h.descricao)}" required placeholder="Ex.: Troca de correia"></div></div>
+      <div class="linha"><div><label>Técnico / empresa</label><input name="responsavel" value="${esc(h.responsavel)}"></div></div>
+      ${h.id ? "" : `<label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="voltou" style="width:auto" checked> Máquina voltou a funcionar</label>`}
+      <p class="muted small">O valor entra também nos Gastos do mês.</p>
+      <button type="submit" class="btn bloco">Salvar</button>`,
+    onSubmit: async (fd) => {
+      const d = { data: fd.get("data"), valor: Number(fd.get("valor")), descricao: String(fd.get("descricao") || "").trim(), responsavel: fd.get("responsavel") || null };
+      if (!d.descricao || fd.get("valor") === "") throw new Error("Informe o que foi feito e o valor.");
+      if (h.id) await q(sb.from("manutencoes").update(d).eq("id", h.id));
+      else {
+        await q(sb.from("manutencoes").insert({ ...d, equipamento_id: e.id }));
+        if (fd.get("voltou") === "on" && e.situacao !== "funcionando") await q(sb.from("equipamentos").update({ situacao: "funcionando" }).eq("id", e.id));
+      }
+      aviso("Manutenção salva!"); renderEquipamentos();
+    },
+  });
+}
+
+// ---------------------------------------------------------------
+// RELATÓRIOS — semanal, quinzenal, mensal e bimestral
+// ---------------------------------------------------------------
+let tipoRel = "mensal", refRel = isoLocal();
+const TIPOS_REL = { semanal: "Semanal", quinzenal: "Quinzenal", mensal: "Mensal", bimestral: "Bimestral" };
+function periodoRel(tipo, ref) {
+  if (tipo !== "bimestral") return periodo(tipo, ref);
+  const d = dt(ref), m0 = d.getMonth() - (d.getMonth() % 2);
+  const ini = inicioMes(new Date(d.getFullYear(), m0, 1)), fim = fimMes(new Date(d.getFullYear(), m0 + 1, 1));
+  return { tipo, inicio: ini, fim, rotulo: `${nomeMes(ini).split(" ")[0]} e ${nomeMes(fim)}` };
+}
+async function renderRelatorios() {
+  const p = periodoRel(tipoRel, refRel);
+  const mesesInteiros = ["mensal", "bimestral"].includes(tipoRel);
+  const [ganhos, entradas, gastosT, maos] = await Promise.all([
+    q(sb.from("v_ganhos").select("*").gte("dia", p.inicio).lte("dia", p.fim)),
+    q(sb.from("v_entradas").select("*").gte("data", p.inicio).lte("data", p.fim)),
+    q(sb.from("gastos").select("*").gte("data", p.inicio).lte("data", p.fim)),
+    carregarMaos(false),
+  ]);
+  const gastos = gastosT.filter((g) => !g.cancelado);
+  const funcIds = new Set(maos.filter(ehFuncHora).map((m) => m.id));
+  let folha = 0;
+  if (mesesInteiros) {
+    for (let m = p.inicio; m <= p.fim; m = addMes(m, 1)) {
+      const r = await rpc("resumo_folha", { p_mes: m }).catch(() => []);
+      folha += (Array.isArray(r) ? r : []).reduce((a, x) => a + Number(x.liquido || 0), 0);
+    }
+  }
+  const externos = ganhos.filter((g) => !(mesesInteiros && funcIds.has(g.mao_de_obra_id)));
+  const maoObra = soma(externos, "valor"), entrou = soma(entradas, "valor_total"), gastou = soma(gastos, "valor");
+  const resultado = entrou - maoObra - folha - gastou;
+
+  const prod = {};
+  ganhos.filter((g) => g.origem !== "hora").forEach((g) => {
+    const k = `${g.produto_nome} · ${g.servico_nome}`;
+    prod[k] ??= { nome: k, qtd: 0, valor: 0 };
+    prod[k].qtd += Number(g.quantidade); prod[k].valor += Number(g.valor);
+  });
+  const ranking = Object.values(prod).sort((a, b) => b.qtd - a.qtd);
+  const maxQ = ranking[0]?.qtd || 1;
+  const pes = {};
+  ganhos.forEach((g) => {
+    pes[g.mao_de_obra_nome] ??= { nome: g.mao_de_obra_nome, pc: 0, h: 0, valor: 0, itens: {} };
+    const x = pes[g.mao_de_obra_nome];
+    if (g.origem === "hora") x.h += Number(g.quantidade);
+    else { x.pc += Number(g.quantidade); const k = `${g.produto_nome} · ${g.servico_nome}`; x.itens[k] = (x.itens[k] || 0) + Number(g.quantidade); }
+    x.valor += Number(g.valor);
+  });
+  const pessoas = Object.values(pes).sort((a, b) => b.valor - a.valor)
+    .map((x) => ({ ...x, top: Object.entries(x.itens).sort((a, b) => b[1] - a[1])[0]?.[0] || (x.h ? "Horas trabalhadas" : "—") }));
+  const qtdTxtP = (x) => [x.pc ? `${inteiro(x.pc)} pç` : "", x.h ? `${inteiro(x.h)} h` : ""].filter(Boolean).join(" · ") || "—";
+
+  main.innerHTML = `
+    <div class="topo-pagina"><div><h1>Relatórios</h1><p>O que entrou, o que saiu e o que mais foi produzido no período.</p></div></div>
+    <div class="barra-periodo">
+      <div class="seg">${Object.entries(TIPOS_REL).map(([k, t]) => `<button class="${k === tipoRel ? "ativo" : ""}" data-tr="${k}">${t}</button>`).join("")}</div>
+      <div class="nav-periodo">
+        <button class="btn sec peq" id="reAnt" aria-label="Período anterior">◀</button><strong>${esc(p.rotulo)}</strong>
+        <button class="btn sec peq" id="reSeg" aria-label="Próximo período">▶</button><button class="btn sec peq" id="reHoje">Hoje</button>
+      </div>
+    </div>
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Resultado do período</span><strong style="${resultado < 0 ? "color:#ff8a80" : ""}">${moeda(resultado)}</strong><small>entrou − saiu</small></div>
+      <div class="kpi-v2"><span>Entrou (empresas)</span><strong>${moeda(entrou)}</strong><small>${entradas.length} entrada${entradas.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2"><span>Mão de obra${mesesInteiros ? " + folha" : ""}</span><strong>${moeda(maoObra + folha)}</strong><small>${mesesInteiros ? `${moeda(maoObra)} + ${moeda(folha)} folha` : "salários mensais: veja o relatório mensal"}</small></div>
+      <div class="kpi-v2"><span>Gastos da fábrica</span><strong>${moeda(gastou)}</strong><small>${gastos.length} lançamento${gastos.length === 1 ? "" : "s"}</small></div>
+    </div>
+    <div class="grade-gastos">
+      <div class="card">
+        <h2 style="margin:0">Produtos mais feitos</h2>
+        <p class="small muted" style="margin:.2rem 0 .8rem">Somando todas as mãos de obra · peças finalizadas</p>
+        ${ranking.length ? ranking.slice(0, 15).map((r, i) => `<div class="rank-linha"><span class="rank-pos ${i ? "" : "um"}">${i + 1}</span>
+          <div><strong>${esc(r.nome)}</strong><i><b style="width:${Math.max(2, Math.round((r.qtd / maxQ) * 100))}%" class="${i ? "" : "um"}"></b></i></div>
+          <span class="right">${inteiro(r.qtd)} pç</span><strong class="right num">${moeda(r.valor)}</strong></div>`).join("")
+          : `<p class="muted">Nenhuma peça finalizada neste período.</p>`}
+      </div>
+      <div class="card">
+        <h2 style="margin-top:0">Por mão de obra</h2>
+        ${pessoas.length ? `<ul class="lista-final">${pessoas.map((x) => `<li><span><strong>${esc(x.nome)}</strong><br><span class="small muted">mais fez: ${esc(x.top)}</span></span>
+          <span class="right"><span class="small">${qtdTxtP(x)}</span><br><strong class="num">${moeda(x.valor)}</strong></span></li>`).join("")}</ul>`
+          : `<p class="muted">Ninguém finalizou nada neste período.</p>`}
+      </div>
+    </div>
+    <div class="acoes"><button class="btn sec" id="reImprimir">🖨️ Imprimir</button><button class="btn sec" id="reCsv">Baixar planilha (CSV)</button></div>`;
+
+  $$("[data-tr]", main).forEach((b) => (b.onclick = () => { tipoRel = b.dataset.tr; renderRelatorios(); }));
+  $("#reAnt").onclick = () => { refRel = tipoRel === "bimestral" ? addMes(p.inicio, -2) : periodoAnterior(p).inicio; renderRelatorios(); };
+  $("#reSeg").onclick = () => { refRel = tipoRel === "bimestral" ? addMes(p.inicio, 2) : periodoSeguinte(p).inicio; renderRelatorios(); };
+  $("#reHoje").onclick = () => { refRel = isoLocal(); renderRelatorios(); };
+  $("#reImprimir").onclick = () => window.print();
+  $("#reCsv").onclick = () => baixarCsv(`relatorio-${tipoRel}-${p.inicio}.csv`, ["Tipo", "Nome", "Quantidade", "Valor"], [
+    ["Resumo", "Entrou (empresas)", "", entrou], ["Resumo", "Mão de obra", "", maoObra], ["Resumo", "Folha", "", folha], ["Resumo", "Gastos", "", gastou], ["Resumo", "Resultado", "", resultado],
+    ...ranking.map((r) => ["Produto", r.nome, r.qtd, r.valor]),
+    ...pessoas.map((x) => ["Mão de obra", x.nome, qtdTxtP(x), x.valor]),
+  ].map((l) => l.map((v) => (typeof v === "number" ? v.toFixed(2).replace(".", ",") : v))));
+}
+
 render();

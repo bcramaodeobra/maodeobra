@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 6)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 7)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -699,6 +699,261 @@ create policy notas_mo on public.notas for select to authenticated using (mao_de
 -- =====================================================================
 -- 11. PERMISSÕES DE ACESSO (projetos novos do Supabase não liberam sozinhos;
 --     a proteção linha a linha continua sendo feita pelo RLS acima)
+-- =====================================================================
+-- 9. VERSÃO 7 — funcionários (mensal ou por hora), folha de pagamento,
+--    gastos do mês, equipamentos e exclusão que mantém o histórico
+-- =====================================================================
+alter table public.perfis add column if not exists cargo text;
+alter table public.perfis add column if not exists valor_hora_extra numeric(10,2);
+alter table public.perfis add column if not exists excluido_em timestamptz;
+alter table public.funcionarios_fixos add column if not exists valor_hora_extra numeric(10,2);
+alter table public.funcionarios_fixos add column if not exists excluido_em timestamptz;
+alter table public.produtos add column if not exists excluido_em timestamptz;
+alter table public.servicos add column if not exists excluido_em timestamptz;
+alter table public.empresas add column if not exists excluido_em timestamptz;
+
+-- Folha: um pagamento por funcionário por mês (valores congelados ao pagar)
+create table if not exists public.folha_pagamentos (
+  id            bigint generated always as identity primary key,
+  mes           date not null,
+  fixo_id       bigint references public.funcionarios_fixos(id),
+  perfil_id     uuid references public.perfis(id),
+  salario       numeric(12,2) not null default 0,
+  horas         numeric(8,2) not null default 0,
+  valor_horas   numeric(12,2) not null default 0,
+  horas_extras  numeric(8,2) not null default 0,
+  valor_extras  numeric(12,2) not null default 0,
+  bonus         numeric(12,2) not null default 0,
+  vales         numeric(12,2) not null default 0,
+  descontos     numeric(12,2) not null default 0,
+  liquido       numeric(12,2) not null default 0,
+  pagamento_id  bigint references public.pagamentos(id) on delete set null,
+  pago_em       timestamptz not null default now(),
+  check ((fixo_id is null) <> (perfil_id is null))
+);
+create unique index if not exists folha_pag_fixo_uk on public.folha_pagamentos (mes, fixo_id) where fixo_id is not null;
+create unique index if not exists folha_pag_perfil_uk on public.folha_pagamentos (mes, perfil_id) where perfil_id is not null;
+
+-- Folha: horas extras, bonificações, vales e descontos
+create table if not exists public.folha_lancamentos (
+  id                 bigint generated always as identity primary key,
+  fixo_id            bigint references public.funcionarios_fixos(id),
+  perfil_id          uuid references public.perfis(id),
+  data               date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  tipo               text not null check (tipo in ('hora_extra','bonus','vale','desconto')),
+  horas              numeric(6,2),
+  valor_hora         numeric(10,2),
+  valor              numeric(12,2) not null check (valor >= 0),
+  descricao          text,
+  folha_pagamento_id bigint references public.folha_pagamentos(id) on delete set null,
+  criado_em          timestamptz not null default now(),
+  check ((fixo_id is null) <> (perfil_id is null))
+);
+create index if not exists folha_lanc_idx on public.folha_lancamentos (data);
+
+create or replace function public.trava_folha_paga()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'DELETE' and old.folha_pagamento_id is not null then
+    raise exception 'Este lançamento já foi pago na folha. Desfaça o pagamento antes.';
+  end if;
+  if tg_op = 'UPDATE' and old.folha_pagamento_id is not null and new.folha_pagamento_id is not distinct from old.folha_pagamento_id then
+    raise exception 'Este lançamento já foi pago na folha. Desfaça o pagamento antes.';
+  end if;
+  return coalesce(new, old);
+end $$;
+drop trigger if exists trg_trava_folha on public.folha_lancamentos;
+create trigger trg_trava_folha before update or delete on public.folha_lancamentos
+for each row execute function public.trava_folha_paga();
+
+-- Equipamentos e manutenções
+create table if not exists public.equipamentos (
+  id            bigint generated always as identity primary key,
+  nome          text not null,
+  modelo        text,
+  numero_serie  text,
+  data_compra   date,
+  valor_compra  numeric(12,2),
+  situacao      text not null default 'funcionando' check (situacao in ('funcionando','manutencao','parado')),
+  observacao    text,
+  excluido_em   timestamptz,
+  criado_em     timestamptz not null default now()
+);
+create table if not exists public.manutencoes (
+  id              bigint generated always as identity primary key,
+  equipamento_id  bigint not null references public.equipamentos(id),
+  data            date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  descricao       text not null,
+  responsavel     text,
+  valor           numeric(12,2) not null default 0 check (valor >= 0),
+  criado_em       timestamptz not null default now()
+);
+
+-- Gastos do mês (fixos se repetem todo mês)
+create table if not exists public.gastos_fixos (
+  id          bigint generated always as identity primary key,
+  descricao   text not null,
+  categoria   text not null default 'Outros',
+  valor       numeric(12,2) not null default 0 check (valor >= 0),
+  dia         int not null default 5 check (dia between 1 and 28),
+  ativo       boolean not null default true,
+  criado_em   timestamptz not null default now()
+);
+create table if not exists public.gastos (
+  id              bigint generated always as identity primary key,
+  data            date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  descricao       text not null,
+  categoria       text not null default 'Outros',
+  valor           numeric(12,2) not null default 0 check (valor >= 0),
+  observacao      text,
+  gasto_fixo_id   bigint references public.gastos_fixos(id) on delete set null,
+  mes_fixo        date,
+  manutencao_id   bigint references public.manutencoes(id) on delete cascade,
+  criado_em       timestamptz not null default now()
+);
+alter table public.gastos add column if not exists cancelado boolean not null default false;
+create unique index if not exists gastos_fixo_mes_uk on public.gastos (gasto_fixo_id, mes_fixo) where gasto_fixo_id is not null;
+create index if not exists gastos_data_idx on public.gastos (data);
+
+-- Toda manutenção entra também nos gastos do mês
+create or replace function public.manutencao_gasto()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_nome text;
+begin
+  select nome into v_nome from equipamentos where id = new.equipamento_id;
+  if tg_op = 'INSERT' then
+    insert into gastos (data, descricao, categoria, valor, observacao, manutencao_id)
+    values (new.data, 'Manutenção: ' || new.descricao, 'Manutenção', new.valor, v_nome, new.id);
+  else
+    update gastos set data = new.data, descricao = 'Manutenção: ' || new.descricao, valor = new.valor, observacao = v_nome
+     where manutencao_id = new.id;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_manutencao_gasto on public.manutencoes;
+create trigger trg_manutencao_gasto after insert or update on public.manutencoes
+for each row execute function public.manutencao_gasto();
+
+-- Lança no mês os gastos fixos que ainda não entraram
+create or replace function public.gerar_gastos_fixos(p_mes date)
+returns int language plpgsql security definer set search_path = public as $$
+declare v_mes date := date_trunc('month', p_mes)::date; v_n int;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono.'; end if;
+  if v_mes > date_trunc('month', now() at time zone 'America/Sao_Paulo')::date then return 0; end if;
+  insert into gastos (data, descricao, categoria, valor, gasto_fixo_id, mes_fixo)
+  select v_mes + (f.dia - 1), f.descricao, f.categoria, f.valor, f.id, v_mes
+    from gastos_fixos f
+   where f.ativo and f.criado_em < (v_mes + interval '1 month')
+     and not exists (select 1 from gastos g where g.gasto_fixo_id = f.id and g.mes_fixo = v_mes);
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+
+-- Resumo da folha do mês (quem já foi pago mostra os valores congelados)
+drop function if exists public.resumo_folha(date);
+create or replace function public.resumo_folha(p_mes date)
+returns table (fixo_id bigint, perfil_id uuid, nome text, cargo text, forma text, pix text, whatsapp text,
+  salario numeric, horas numeric, valor_horas numeric, horas_extras numeric, valor_extras numeric,
+  bonus numeric, vales numeric, descontos numeric, liquido numeric, folha_pagamento_id bigint, pago_em timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+declare v_ini date := date_trunc('month', p_mes)::date; v_fim date := (date_trunc('month', p_mes) + interval '1 month - 1 day')::date;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono.'; end if;
+  return query
+  with pessoas as (
+    select f.id as fx, null::uuid as pf, f.nome, f.cargo, 'mensal'::text as forma, f.pix, f.whatsapp, coalesce(f.salario, 0) as sal
+      from funcionarios_fixos f
+     where (f.excluido_em is null and f.ativo and f.criado_em::date <= v_fim)
+        or exists (select 1 from folha_lancamentos l where l.fixo_id = f.id and l.data between v_ini and v_fim)
+        or exists (select 1 from folha_pagamentos p where p.fixo_id = f.id and p.mes = v_ini)
+    union all
+    select null::bigint, p.id, p.nome, p.cargo, 'hora', p.pix, p.whatsapp, 0::numeric
+      from perfis p
+     where p.papel = 'mao_de_obra' and p.tipo = 'interna' and p.forma_pagamento = 'hora'
+       and ((p.excluido_em is null and p.ativo)
+         or exists (select 1 from horas h where h.mao_de_obra_id = p.id and h.data between v_ini and v_fim)
+         or exists (select 1 from folha_lancamentos l where l.perfil_id = p.id and l.data between v_ini and v_fim)
+         or exists (select 1 from folha_pagamentos fp where fp.perfil_id = p.id and fp.mes = v_ini))
+  ), calc as (
+    select pe.*,
+      coalesce((select sum(h.horas) from horas h where h.mao_de_obra_id = pe.pf and h.data between v_ini and v_fim), 0) as hs,
+      coalesce((select sum(h.valor) from horas h where h.mao_de_obra_id = pe.pf and h.data between v_ini and v_fim), 0) as vhs,
+      coalesce((select sum(l.horas) from folha_lancamentos l where (l.fixo_id = pe.fx or l.perfil_id = pe.pf) and l.tipo = 'hora_extra' and l.data between v_ini and v_fim), 0) as he,
+      coalesce((select sum(l.valor) from folha_lancamentos l where (l.fixo_id = pe.fx or l.perfil_id = pe.pf) and l.tipo = 'hora_extra' and l.data between v_ini and v_fim), 0) as vhe,
+      coalesce((select sum(l.valor) from folha_lancamentos l where (l.fixo_id = pe.fx or l.perfil_id = pe.pf) and l.tipo = 'bonus' and l.data between v_ini and v_fim), 0) as bo,
+      coalesce((select sum(l.valor) from folha_lancamentos l where (l.fixo_id = pe.fx or l.perfil_id = pe.pf) and l.tipo = 'vale' and l.data between v_ini and v_fim), 0) as va,
+      coalesce((select sum(l.valor) from folha_lancamentos l where (l.fixo_id = pe.fx or l.perfil_id = pe.pf) and l.tipo = 'desconto' and l.data between v_ini and v_fim), 0) as de,
+      (select fp from folha_pagamentos fp where fp.mes = v_ini and (fp.fixo_id = pe.fx or fp.perfil_id = pe.pf)) as pg
+    from pessoas pe
+  )
+  select c.fx, c.pf, c.nome, c.cargo, c.forma, c.pix, c.whatsapp,
+    coalesce((c.pg).salario, c.sal), coalesce((c.pg).horas, c.hs), coalesce((c.pg).valor_horas, c.vhs),
+    coalesce((c.pg).horas_extras, c.he), coalesce((c.pg).valor_extras, c.vhe), coalesce((c.pg).bonus, c.bo),
+    coalesce((c.pg).vales, c.va), coalesce((c.pg).descontos, c.de),
+    coalesce((c.pg).liquido, c.sal + c.vhs + c.vhe + c.bo - c.va - c.de),
+    (c.pg).id, (c.pg).pago_em
+  from calc c
+  order by c.forma desc, c.nome;
+end $$;
+
+-- Marca o funcionário como pago no mês (trava os lançamentos e as horas)
+create or replace function public.pagar_folha(p_mes date, p_fixo bigint default null, p_perfil uuid default null)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare r record; v_id bigint; v_pag bigint; v_ini date := date_trunc('month', p_mes)::date;
+  v_fim date := (date_trunc('month', p_mes) + interval '1 month - 1 day')::date;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono pode pagar a folha.'; end if;
+  select * into r from resumo_folha(v_ini) x
+   where (p_fixo is not null and x.fixo_id = p_fixo) or (p_perfil is not null and x.perfil_id = p_perfil);
+  if not found then raise exception 'Funcionário não encontrado nesta folha.'; end if;
+  if r.folha_pagamento_id is not null then raise exception 'Este funcionário já está pago neste mês.'; end if;
+  if p_perfil is not null then
+    insert into pagamentos (mao_de_obra_id, tipo, inicio, fim, quantidade, valor_total)
+    values (p_perfil, 'mensal', v_ini, v_fim, r.horas, r.liquido) returning id into v_pag;
+    update horas set pagamento_id = v_pag where mao_de_obra_id = p_perfil and pagamento_id is null and data between v_ini and v_fim;
+  end if;
+  insert into folha_pagamentos (mes, fixo_id, perfil_id, salario, horas, valor_horas, horas_extras, valor_extras, bonus, vales, descontos, liquido, pagamento_id)
+  values (v_ini, p_fixo, p_perfil, r.salario, r.horas, r.valor_horas, r.horas_extras, r.valor_extras, r.bonus, r.vales, r.descontos, r.liquido, v_pag)
+  returning id into v_id;
+  update folha_lancamentos set folha_pagamento_id = v_id
+   where ((p_fixo is not null and fixo_id = p_fixo) or (p_perfil is not null and perfil_id = p_perfil)) and data between v_ini and v_fim;
+  return v_id;
+end $$;
+
+create or replace function public.desfazer_folha(p_id bigint)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_pag bigint;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono.'; end if;
+  select pagamento_id into v_pag from folha_pagamentos where id = p_id;
+  update folha_lancamentos set folha_pagamento_id = null where folha_pagamento_id = p_id;
+  delete from folha_pagamentos where id = p_id;
+  if v_pag is not null then
+    update horas set pagamento_id = null where pagamento_id = v_pag;
+    delete from pagamentos where id = v_pag;
+  end if;
+end $$;
+
+-- Segurança das tabelas novas
+alter table public.folha_pagamentos  enable row level security;
+alter table public.folha_lancamentos enable row level security;
+alter table public.equipamentos      enable row level security;
+alter table public.manutencoes       enable row level security;
+alter table public.gastos_fixos      enable row level security;
+alter table public.gastos            enable row level security;
+do $$ declare t text; begin
+  foreach t in array array['folha_pagamentos','folha_lancamentos','equipamentos','manutencoes','gastos_fixos','gastos'] loop
+    execute format('drop policy if exists %I on public.%I', t || '_dono', t);
+    execute format('create policy %I on public.%I for all to authenticated using (eh_dono()) with check (eh_dono())', t || '_dono', t);
+  end loop;
+end $$;
+drop policy if exists folha_pag_mo on public.folha_pagamentos;
+create policy folha_pag_mo on public.folha_pagamentos for select to authenticated using (perfil_id = auth.uid());
+drop policy if exists folha_lanc_mo on public.folha_lancamentos;
+create policy folha_lanc_mo on public.folha_lancamentos for select to authenticated using (perfil_id = auth.uid());
+
+
 -- =====================================================================
 revoke all on all tables in schema public from anon;
 revoke execute on all functions in schema public from public, anon;

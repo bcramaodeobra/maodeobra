@@ -40,7 +40,8 @@ async function carregar() {
     q(sb.from("pagamentos").select("*").order("pago_em", { ascending: false }).limit(12)),
     q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(12)),
   ]);
-  return { abertos, ganhos, pagamentos, notas };
+  const lancs = porHora ? await q(sb.from("folha_lancamentos").select("*").gte("data", inicioMes()).order("data", { ascending: false })).catch(() => []) : [];
+  return { abertos, ganhos, pagamentos, notas, lancs };
 }
 
 async function render() {
@@ -93,6 +94,12 @@ function abaHoras(d, per) {
         <span class="right"><strong class="num">${moeda(h.valor)}</strong><br>${h.pago ? selo("pago", "Pago") : selo("aberto", "A receber")}</span></li>`).join("")}</ul>
       <div class="soma-final"><span>NO PERÍODO · ${inteiro(soma(doPer, "quantidade"))} h</span><span>${moeda(soma(doPer, "valor"))}</span></div>
     </div>
+    ${d.lancs.length ? `<div class="card" style="margin-top:.8rem"><h3>Outros lançamentos do mês</h3><ul class="lista-final">${d.lancs.map((l) => {
+      const neg = l.tipo === "vale" || l.tipo === "desconto";
+      const nome = { hora_extra: "Hora extra", bonus: "Bonificação", vale: "Vale", desconto: "Desconto" }[l.tipo];
+      return `<li><span>${diaMes(l.data)} – <strong>${nome}</strong>${l.tipo === "hora_extra" ? ` · ${inteiro(l.horas)} h` : ""}${l.descricao ? `<br><span class="small muted">${esc(l.descricao)}</span>` : ""}</span>
+        <strong class="num" style="${neg ? "color:#b3261e" : ""}">${neg ? "− " : ""}${moeda(l.valor)}</strong></li>`;
+    }).join("")}</ul></div>` : ""}
     <p class="muted small" style="text-align:center">As horas são lançadas pelo Bruno. Se faltar algum dia, fale com ele.</p>`
     : `<div class="card vazio">Nenhuma hora lançada ainda. As horas são lançadas pelo Bruno.</div>`);
 }

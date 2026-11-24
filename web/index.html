@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#23324d">
+  <meta name="theme-color" content="#172238">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="icons/favicon-48.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -12,14 +12,18 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="BCRA">
   <title>Entrar — Controle de Produção</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="v2 login-v2">
   <div class="login-wrap">
     <div class="card login-card">
       <div class="marca">
-        <div class="ponto">🧵</div>
-        <h1 id="nomeFabrica">Controle de Produção</h1>
+        <svg class="logo-bcra grande" viewBox="0 0 120 120" role="img" aria-label="BCRA Mão de Obra"><circle cx="60" cy="60" r="60" fill="#172238"/><path d="M43 43 C 20 62, 24 94, 50 90 C 72 87, 76 68, 96 80" fill="none" stroke="#f5c518" stroke-width="5" stroke-linecap="round"/><g transform="rotate(-45 60 60)"><path d="M56 26 A4 4 0 0 1 64 26 L64 90 L60 106 L56 90 Z" fill="#fff"/><rect x="58.4" y="29" width="3.2" height="13" rx="1.6" fill="#172238"/></g></svg>
+        <div class="marca-nome">BCRA</div>
+        <div class="marca-sub"><i></i>MÃO DE OBRA</div>
+        <h1 id="nomeFabrica" class="hidden">Controle de Produção</h1>
         <div class="muted small">Entre com o usuário e a senha que você recebeu</div>
       </div>
       <form id="formLogin">

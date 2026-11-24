@@ -671,3 +671,74 @@ body.v2 .menu-mais .ic { width: 38px; height: 38px; padding: 9px; border-radius:
 body.v2 .menu-mais .seta { width: 18px; height: 18px; fill: none; stroke: #a3abb9; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 body.v2 .menu-mais button.sair { color: #b3261e; }
 body.v2 .menu-mais button.sair .ic { background: #fbeceb; stroke: #b3261e; }
+
+/* Logotipo (agulha e linha) */
+.logo-bcra { width: 44px; height: 44px; flex-shrink: 0; display: block; }
+.logo-bcra.pequeno { width: 38px; height: 38px; }
+.logo-bcra.grande { width: 84px; height: 84px; margin: 0 auto .7rem; }
+.login-v2 .login-wrap { background: linear-gradient(#172238 0 42%, #f3f5f9 42%); }
+.login-v2 .login-card { border-radius: 18px; padding: 1.8rem 1.5rem 1.4rem; box-shadow: 0 10px 30px rgba(23,34,56,.15); }
+.marca-nome { font-family: Manrope, sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1; letter-spacing: 1px; color: #172238; }
+.marca-sub { display: flex; align-items: center; justify-content: center; gap: .5rem; margin: .35rem 0 .9rem; font-weight: 600; font-size: .8rem; letter-spacing: 4px; color: #5b6478; }
+.marca-sub i { width: 18px; height: 3px; border-radius: 2px; background: #f5c518; }
+
+/* ===================== Versão 7 ===================== */
+.btn-lixo { width: 34px; height: 34px; flex-shrink: 0; display: inline-grid; place-items: center; border: 1px solid #f0d4d2; border-radius: 9px;
+  background: #fdf3f2; color: #b3261e; cursor: pointer; padding: 0; vertical-align: middle; }
+.btn-lixo:hover { background: #fbe4e2; }
+.btn-lixo svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.v2 .btn.perigo { background: #fdf3f2; color: #b3261e; border: 1px solid #f0d4d2; }
+body.v2 .btn.perigo:hover { background: #fbe4e2; }
+.neg { color: #b3261e; }
+.chip-lanc { display: inline-block; padding: .1rem .5rem; border-radius: 99px; font-size: .72rem; font-weight: 700; margin: 0 .25rem; }
+.chip-lanc.hs { background: #eef2f8; color: #23324d; } .chip-lanc.he { background: #e3eafa; color: #2f4366; }
+.chip-lanc.bo { background: #e6f4ea; color: #1e6b3a; } .chip-lanc.va { background: #fff3cd; color: #6b5200; } .chip-lanc.de { background: #fdecea; color: #b3261e; }
+.ff-mes { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
+.ff-mes strong { min-width: 140px; text-align: center; }
+.ff-resumo { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .6rem; margin: .9rem 0; padding: .8rem; border-radius: 12px; background: #f3f5f9; font-size: .78rem; color: var(--txt-2); }
+.ff-resumo.tres { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ff-resumo strong { display: block; margin-top: .15rem; font-size: 1rem; color: var(--txt); font-variant-numeric: tabular-nums; }
+.ff-resumo .liq strong { color: #2e9d55; font-size: 1.1rem; }
+.ff-resumo strong.neg { color: #b3261e; }
+body.v2 .btn-nome.func-mensal { background: var(--navy-2); }
+body.v2 .btn-nome.func-hora { background: #fff; color: var(--txt); border: 1.5px solid #cfd6e2; box-shadow: none; }
+body.v2 .btn-nome.func-hora small { color: var(--txt-2); }
+body.v2 .bandeira.ok { background: #e6f4ea; color: #1e6b3a; }
+.ponto.funcionarios { background: var(--amarelo); }
+.legenda-func { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: .8rem; font-size: .78rem; color: var(--txt-2); }
+.legenda-func i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: .35rem; vertical-align: -1px; }
+.lg-mensal { background: var(--navy-2); } .lg-hora { background: #fff; border: 1.5px solid #cfd6e2; }
+.topo-acoes .nav-periodo { display: flex; align-items: center; gap: .4rem; }
+.topo-acoes .nav-periodo strong { min-width: 130px; text-align: center; }
+.grade-gastos { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 1rem; align-items: start; }
+.grade-gastos .card { margin: 0; }
+.barra-cat { display: grid; grid-template-columns: 1fr auto; gap: .3rem; margin-bottom: .8rem; font-size: .9rem; }
+.barra-cat i { grid-column: 1 / -1; height: 8px; border-radius: 99px; background: #eef1f5; overflow: hidden; }
+.barra-cat b { display: block; height: 100%; border-radius: 99px; background: var(--navy); }
+.grade-equip { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1rem; align-items: start; }
+.grade-equip .card { margin: 0; }
+.lista-equip { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .8rem; }
+.equip-card { display: flex; flex-direction: column; gap: .35rem; text-align: left; padding: .9rem 1rem; border: 1px solid var(--borda); border-radius: 14px;
+  background: #fff; cursor: pointer; font: inherit; color: var(--txt); }
+.equip-card:hover { border-color: #b9c3d3; }
+.equip-card.sel { border: 2px solid var(--navy); box-shadow: 0 4px 12px rgba(23,34,56,.10); }
+.eq-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; }
+.eq-topo strong { font-family: Manrope, sans-serif; font-size: 1rem; }
+.kpi-v2 strong.kpi-txt { font-size: 1.15rem; line-height: 1.3; }
+.rank-linha { display: grid; grid-template-columns: 30px minmax(0, 1fr) 90px 110px; align-items: center; gap: .7rem; padding: .5rem 0; font-size: .9rem; }
+.rank-linha i { display: block; height: 9px; border-radius: 99px; background: #eef1f5; margin-top: .35rem; overflow: hidden; }
+.rank-linha b { display: block; height: 100%; border-radius: 99px; background: var(--navy); }
+.rank-linha b.um { background: var(--amarelo); }
+.rank-pos { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-weight: 800; font-size: .8rem; background: #eef1f5; color: var(--txt-2); }
+.rank-pos.um { background: var(--amarelo); color: var(--sb); }
+body.v2 .menu-mais small { font-weight: 500; font-size: .78rem; }
+@media (max-width: 1100px) { .grade-gastos, .grade-equip { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .ff-resumo { grid-template-columns: 1fr 1fr; }
+  .ff-resumo .liq { grid-column: 1 / -1; }
+  .rank-linha { grid-template-columns: 26px minmax(0, 1fr) 70px; }
+  .rank-linha > strong { display: none; }
+  .topo-acoes .nav-periodo { width: 100%; justify-content: space-between; }
+  .lista-equip { grid-template-columns: 1fr; }
+}
+@media print { .barra-periodo, .acoes, .topo-acoes { display: none !important; } }
