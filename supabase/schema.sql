@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 5)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 6)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -24,6 +24,19 @@ alter table public.perfis add column if not exists frequencia_pagamento text not
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'perfis_frequencia_chk') then
     alter table public.perfis add constraint perfis_frequencia_chk check (frequencia_pagamento in ('semanal','quinzenal','mensal'));
+  end if;
+end $$;
+
+-- Tipo de mão de obra e forma de pagamento (por produção ou por hora)
+alter table public.perfis add column if not exists tipo text not null default 'externa';
+alter table public.perfis add column if not exists forma_pagamento text not null default 'producao';
+alter table public.perfis add column if not exists valor_hora numeric(10,2);
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'perfis_tipo_chk') then
+    alter table public.perfis add constraint perfis_tipo_chk check (tipo in ('externa','interna'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'perfis_forma_chk') then
+    alter table public.perfis add constraint perfis_forma_chk check (forma_pagamento in ('producao','hora'));
   end if;
 end $$;
 
@@ -104,6 +117,7 @@ create table if not exists public.pagamentos (
   pago_em         timestamptz not null default now()
 );
 create index if not exists pagamentos_mo_idx on public.pagamentos (mao_de_obra_id, inicio);
+alter table public.pagamentos alter column quantidade type numeric(12,2);
 
 -- Cada entrega paga aponta para o pagamento que a quitou
 alter table public.entregas add column if not exists pagamento_id bigint references public.pagamentos(id) on delete set null;
@@ -158,6 +172,7 @@ create table if not exists public.notas (
   lida_em         timestamptz
 );
 create index if not exists notas_mo_idx on public.notas (mao_de_obra_id, enviada_em desc);
+alter table public.notas alter column quantidade type numeric(12,2);
 alter table public.notas add column if not exists inicio date;
 alter table public.notas add column if not exists fim date;
 alter table public.notas add column if not exists tipo text;
@@ -203,11 +218,42 @@ create table if not exists public.avisos (
 );
 create index if not exists avisos_pend_idx on public.avisos (lote_id) where visto_em is null;
 
+-- ---------------------------------------------------------------------
+-- 6f. HORAS trabalhadas (mão de obra paga por hora) — lançadas pelo dono
+-- ---------------------------------------------------------------------
+create table if not exists public.horas (
+  id              bigint generated always as identity primary key,
+  mao_de_obra_id  uuid not null references public.perfis(id),
+  data            date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  horas           numeric(5,2) not null check (horas > 0 and horas <= 24),
+  valor_hora      numeric(10,2) not null check (valor_hora >= 0),   -- congelado no lançamento
+  valor           numeric(12,2) generated always as (round(horas * valor_hora, 2)) stored,
+  observacao      text,
+  pagamento_id    bigint references public.pagamentos(id) on delete set null,
+  criado_em       timestamptz not null default now()
+);
+create index if not exists horas_mo_idx on public.horas (mao_de_obra_id, data);
+
+-- ---------------------------------------------------------------------
+-- 6g. FUNCIONÁRIOS FIXOS (registrados, salário mensal — sem login)
+-- ---------------------------------------------------------------------
+create table if not exists public.funcionarios_fixos (
+  id         bigint generated always as identity primary key,
+  nome       text not null,
+  cargo      text,
+  salario    numeric(10,2),
+  whatsapp   text,
+  pix        text,
+  endereco   text,
+  ativo      boolean not null default true,
+  criado_em  timestamptz not null default now()
+);
+
 -- =====================================================================
 -- 7. VISÕES (cálculos prontos) — recriadas a cada atualização
 -- =====================================================================
-drop view if exists public.v_resumo_mensal, public.v_fechamento, public.v_entregas, public.v_lotes,
-  public.v_entradas, public.v_distribuicao cascade;
+drop view if exists public.v_resumo_mensal, public.v_fechamento, public.v_ganhos, public.v_horas,
+  public.v_entregas, public.v_lotes, public.v_entradas, public.v_distribuicao cascade;
 
 create view public.v_lotes with (security_invoker = true) as
 select
@@ -242,7 +288,8 @@ select
   (e.pagamento_id is not null) as pago,
   p.nome  as produto_nome,
   s.nome  as servico_nome,
-  pf.nome as mao_de_obra_nome
+  pf.nome as mao_de_obra_nome,
+  pf.tipo as mao_de_obra_tipo
 from public.entregas e
 join public.lotes l    on l.id = e.lote_id
 join public.produtos p on p.id = l.produto_id
@@ -250,26 +297,45 @@ join public.servicos s on s.id = l.servico_id
 join public.perfis pf  on pf.id = l.mao_de_obra_id
 where l.status <> 'cancelado';
 
--- Fechamento detalhado por mês: mão de obra × produto × serviço
+-- Horas com nomes
+create view public.v_horas with (security_invoker = true) as
+select h.*, pf.nome as mao_de_obra_nome, pf.tipo as mao_de_obra_tipo,
+       date_trunc('month', h.data)::date as mes_ref, (h.pagamento_id is not null) as pago
+from public.horas h
+join public.perfis pf on pf.id = h.mao_de_obra_id;
+
+-- Tudo o que cada mão de obra ganhou: peças entregues + horas trabalhadas
+create view public.v_ganhos with (security_invoker = true) as
+select 'producao'::text as origem, e.id, e.mao_de_obra_id, e.mao_de_obra_nome, e.mao_de_obra_tipo,
+       e.dia, e.mes_ref, e.produto_nome, e.servico_nome, e.quantidade::numeric as quantidade,
+       e.valor_unitario, e.valor, e.pago, e.pagamento_id
+  from public.v_entregas e
+union all
+select 'hora', h.id, h.mao_de_obra_id, h.mao_de_obra_nome, h.mao_de_obra_tipo,
+       h.data, h.mes_ref, 'Horas', 'Horas trabalhadas', h.horas,
+       h.valor_hora, h.valor, h.pago, h.pagamento_id
+  from public.v_horas h;
+
+-- Fechamento detalhado por mês: mão de obra × produto × serviço (horas incluídas)
 create view public.v_fechamento with (security_invoker = true) as
 select
-  mao_de_obra_id, mao_de_obra_nome, mes_ref as mes,
+  mao_de_obra_id, mao_de_obra_nome, mao_de_obra_tipo, mes_ref as mes,
   produto_nome, servico_nome, valor_unitario,
   sum(quantidade) as quantidade,
   sum(valor)      as valor,
   sum(valor) filter (where pago) as valor_pago
-from public.v_entregas
-group by mao_de_obra_id, mao_de_obra_nome, mes_ref, produto_nome, servico_nome, valor_unitario;
+from public.v_ganhos
+group by mao_de_obra_id, mao_de_obra_nome, mao_de_obra_tipo, mes_ref, produto_nome, servico_nome, valor_unitario;
 
 -- Total do mês por mão de obra
 create view public.v_resumo_mensal with (security_invoker = true) as
 select
-  mao_de_obra_id, mao_de_obra_nome, mes_ref as mes,
+  mao_de_obra_id, mao_de_obra_nome, mao_de_obra_tipo, mes_ref as mes,
   sum(quantidade) as quantidade,
   sum(valor)      as valor_total,
   coalesce(sum(valor) filter (where pago), 0) as valor_pago
-from public.v_entregas
-group by mao_de_obra_id, mao_de_obra_nome, mes_ref;
+from public.v_ganhos
+group by mao_de_obra_id, mao_de_obra_nome, mao_de_obra_tipo, mes_ref;
 
 -- Entradas com nomes
 create view public.v_entradas with (security_invoker = true) as
@@ -315,6 +381,23 @@ end $$;
 drop trigger if exists trg_trava_mes_pago on public.entregas;
 create trigger trg_trava_mes_pago before update or delete on public.entregas
 for each row execute function public.trava_mes_pago();
+
+-- Horas já pagas ficam travadas
+create or replace function public.trava_horas_pagas()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'DELETE' and old.pagamento_id is not null then
+    raise exception 'Essas horas já foram pagas. Desfaça o pagamento antes de alterar.';
+  end if;
+  if tg_op = 'UPDATE' and old.pagamento_id is not null and new.pagamento_id is not distinct from old.pagamento_id
+     and (new.horas <> old.horas or new.valor_hora <> old.valor_hora or new.data <> old.data) then
+    raise exception 'Essas horas já foram pagas. Desfaça o pagamento antes de alterar.';
+  end if;
+  return coalesce(new, old);
+end $$;
+drop trigger if exists trg_trava_horas on public.horas;
+create trigger trg_trava_horas before update or delete on public.horas
+for each row execute function public.trava_horas_pagas();
 
 -- Lote fica "pronto" quando tudo foi entregue (e volta a "aberto" se uma entrega for desfeita)
 create or replace function public.atualiza_status_lote()
@@ -420,14 +503,15 @@ end $$;
 drop function if exists public.fechar_mes(uuid, date), public.reabrir_mes(bigint),
   public.enviar_nota(uuid, date, text);
 
--- Marca como pago tudo o que a mão de obra finalizou no período e ainda não foi pago
+-- Marca como pago tudo o que a mão de obra ganhou no período (peças + horas) e ainda não foi pago
+drop function if exists public.enviar_nota(uuid, date, date, text, text);
 create or replace function public.pagar_periodo(p_mao_de_obra uuid, p_inicio date, p_fim date, p_tipo text default 'mensal')
 returns bigint language plpgsql security definer set search_path = public as $$
-declare v_id bigint; v_qtd int; v_valor numeric;
+declare v_id bigint; v_qtd numeric; v_valor numeric;
 begin
   if not eh_dono() then raise exception 'Apenas o dono pode registrar pagamentos.'; end if;
   select coalesce(sum(quantidade), 0), coalesce(sum(valor), 0) into v_qtd, v_valor
-    from v_entregas where mao_de_obra_id = p_mao_de_obra and not pago and dia between p_inicio and p_fim;
+    from v_ganhos where mao_de_obra_id = p_mao_de_obra and not pago and dia between p_inicio and p_fim;
   if v_qtd = 0 then raise exception 'Não há nada a pagar neste período.'; end if;
   insert into pagamentos (mao_de_obra_id, tipo, inicio, fim, quantidade, valor_total)
   values (p_mao_de_obra, coalesce(p_tipo, 'mensal'), p_inicio, p_fim, v_qtd, v_valor) returning id into v_id;
@@ -436,15 +520,18 @@ begin
    where l.id = e.lote_id and l.mao_de_obra_id = p_mao_de_obra and l.status <> 'cancelado'
      and e.pagamento_id is null
      and (e.entregue_em at time zone 'America/Sao_Paulo')::date between p_inicio and p_fim;
+  update horas set pagamento_id = v_id
+   where mao_de_obra_id = p_mao_de_obra and pagamento_id is null and data between p_inicio and p_fim;
   return v_id;
 end $$;
 
--- Desfaz um pagamento (as entregas voltam para "a pagar")
+-- Desfaz um pagamento (peças e horas voltam para "a pagar")
 create or replace function public.desfazer_pagamento(p_pagamento bigint)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not eh_dono() then raise exception 'Apenas o dono.'; end if;
   update entregas set pagamento_id = null where pagamento_id = p_pagamento;
+  update horas set pagamento_id = null where pagamento_id = p_pagamento;
   delete from pagamentos where id = p_pagamento;
 end $$;
 
@@ -452,12 +539,12 @@ end $$;
 create or replace function public.enviar_nota(p_mao_de_obra uuid, p_inicio date, p_fim date,
   p_tipo text default 'mensal', p_mensagem text default null)
 returns bigint language plpgsql security definer set search_path = public as $$
-declare v_itens jsonb; v_qtd int; v_valor numeric; v_id bigint;
+declare v_itens jsonb; v_qtd numeric; v_valor numeric; v_id bigint;
 begin
   if not eh_dono() then raise exception 'Apenas o dono pode enviar notas.'; end if;
   with g as (
     select produto_nome, servico_nome, valor_unitario, sum(quantidade) quantidade, sum(valor) valor
-      from v_entregas where mao_de_obra_id = p_mao_de_obra and dia between p_inicio and p_fim
+      from v_ganhos where mao_de_obra_id = p_mao_de_obra and dia between p_inicio and p_fim
      group by produto_nome, servico_nome, valor_unitario)
   select coalesce(jsonb_agg(jsonb_build_object('produto', produto_nome, 'servico', servico_nome,
            'quantidade', quantidade, 'valor_unitario', valor_unitario, 'valor', valor)
@@ -470,6 +557,33 @@ begin
           v_qtd, v_valor, v_itens, nullif(trim(p_mensagem), ''))
   returning id into v_id;
   return v_id;
+end $$;
+
+-- Lança horas trabalhadas (o valor da hora vem do cadastro, do padrão ou do informado)
+create or replace function public.lancar_horas(p_mao_de_obra uuid, p_data date, p_horas numeric,
+  p_valor_hora numeric default null, p_observacao text default null)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare v_valor numeric; v_id bigint;
+begin
+  if not eh_dono() then raise exception 'Apenas o dono pode lançar horas.'; end if;
+  if p_horas is null or p_horas <= 0 or p_horas > 24 then raise exception 'Informe as horas (entre 0 e 24).'; end if;
+  select coalesce(p_valor_hora, pf.valor_hora,
+                  (select nullif(replace(valor, ',', '.'), '')::numeric from configuracoes where chave = 'valor_hora_padrao'))
+    into v_valor from perfis pf where pf.id = p_mao_de_obra;
+  if v_valor is null then raise exception 'Defina o valor da hora no cadastro ou no Administrativo.'; end if;
+  insert into horas (mao_de_obra_id, data, horas, valor_hora, observacao)
+  values (p_mao_de_obra, coalesce(p_data, (now() at time zone 'America/Sao_Paulo')::date), p_horas, v_valor,
+          nullif(trim(p_observacao), ''))
+  returning id into v_id;
+  return v_id;
+end $$;
+
+create or replace function public.excluir_horas(p_id bigint)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono() then raise exception 'Apenas o dono.'; end if;
+  delete from horas where id = p_id;
+  if not found then raise exception 'Lançamento não encontrado.'; end if;
 end $$;
 
 -- A mão de obra avisa que terminou um lote (o dono confere e clica em LOTE PRONTO)
@@ -562,6 +676,15 @@ drop policy if exists empresas_dono on public.empresas;
 create policy empresas_dono on public.empresas for all to authenticated using (eh_dono()) with check (eh_dono());
 drop policy if exists entradas_dono on public.entradas;
 create policy entradas_dono on public.entradas for all to authenticated using (eh_dono()) with check (eh_dono());
+alter table public.horas              enable row level security;
+alter table public.funcionarios_fixos enable row level security;
+drop policy if exists horas_dono on public.horas;
+create policy horas_dono on public.horas for all to authenticated using (eh_dono()) with check (eh_dono());
+drop policy if exists horas_mo on public.horas;
+create policy horas_mo on public.horas for select to authenticated using (mao_de_obra_id = auth.uid());
+drop policy if exists fixos_dono on public.funcionarios_fixos;
+create policy fixos_dono on public.funcionarios_fixos for all to authenticated using (eh_dono()) with check (eh_dono());
+
 alter table public.avisos        enable row level security;
 drop policy if exists avisos_dono on public.avisos;
 create policy avisos_dono on public.avisos for all to authenticated using (eh_dono()) with check (eh_dono());

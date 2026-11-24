@@ -3,29 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#23324d">
+  <meta name="theme-color" content="#172238">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="icons/favicon-48.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="BCRA">
   <title>Minha Produção</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="com-lateral mo">
-  <header class="topbar">
-    <button class="icon-btn" id="btnMenu" title="Menu" aria-label="Abrir menu">☰</button>
-    <div class="brand">🧵 <span id="nomeFabrica">Bordados</span></div>
-    <div class="spacer"></div>
-    <div class="who" id="quem"></div>
+<body class="v2 mo2">
+  <header class="mo2-topo">
+    <div class="mo2-linha">
+      <div class="sb-logo pequeno" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#172238" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="3" rx="1"/><rect x="6" y="18" width="12" height="3" rx="1"/><path d="M8 6v12M16 6v12M8 9h8M8 12h8M8 15h8"/></svg>
+      </div>
+      <div class="tc-texto"><strong id="quem">Olá</strong><span id="nomeFabrica"></span></div>
+      <span class="mo2-data" id="hojeTxt"></span>
+    </div>
+    <div id="hero"></div>
   </header>
 
-  <div class="lateral-fundo hidden" id="lateralFundo"></div>
-  <aside class="lateral" id="lateral" aria-label="Resumo da produção"></aside>
-
   <main id="conteudo"><div class="vazio">Carregando…</div></main>
+
+  <nav class="mo2-nav" id="moNav">
+    <button data-aba="lotes" class="ativo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg><span id="rotLotes">Lotes</span></button>
+    <button data-aba="finalizados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Finalizados</span></button>
+    <button data-aba="pagamentos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/></svg><span>Pagamentos</span><i class="hidden" id="pontoNota"></i></button>
+    <button data-aba="perfil"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>Perfil</span></button>
+  </nav>
 
   <script type="module" src="js/mao-de-obra.js"></script>
 </body>

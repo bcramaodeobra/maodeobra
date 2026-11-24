@@ -9,9 +9,13 @@ import { NOME_FABRICA } from "../config.js";
 const perfil = await exigirPapel("dono");
 document.title = `${NOME_FABRICA} — Painel do Dono`;
 $("#quem").textContent = perfil.nome;
+$("#sbAvatar").textContent = (perfil.nome || "B").trim()[0].toUpperCase();
+$("#sbNome").textContent = NOME_FABRICA.split(" ")[0];
+$("#tcOla").textContent = `Olá, ${perfil.nome.split(" ")[0]}`;
+$("#tcData").textContent = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
 $("#btnSair").onclick = sair;
 $("#btnSenha").onclick = modalMinhaConta;
-$("#btnSenha").title = "Minha conta (usuário e senha)";
+$("#tcSino").onclick = () => { if (abaAtual !== "inicio") irPara("inicio"); setTimeout(() => $("#avisosInicio")?.scrollIntoView({ behavior: "smooth" }), 300); };
 
 function modalMinhaConta() {
   const m = abrirModal({
@@ -41,6 +45,28 @@ let abaAtual = "inicio";
 const diaMes = (d) => dataBR(d).slice(0, 5);
 const maiusc = (t) => String(t ?? "").toUpperCase();
 const soma = (lista, campo) => lista.reduce((s, x) => s + Number(x[campo] || 0), 0);
+// Tipos de mão de obra (externa, interna, fixos) e forma de pagamento (produção ou hora)
+let CONF = {};
+async function carregarConf() {
+  CONF = Object.fromEntries((await q(sb.from("configuracoes").select("*"))).map((c) => [c.chave, c.valor]));
+  return CONF;
+}
+const moduloAtivo = (k) => CONF[`modulo_${k}`] !== "nao";
+const tipoDe = (m) => (m.tipo === "interna" ? "interna" : "externa");
+const porHora = (m) => m.forma_pagamento === "hora";
+const numConf = (k) => { const v = String(CONF[k] ?? "").replace(",", "."); return v === "" || isNaN(Number(v)) ? null : Number(v); };
+const valorHoraDe = (m) => (m.valor_hora != null ? Number(m.valor_hora) : numConf("valor_hora_padrao"));
+const ehHora = (i) => i.origem === "hora" || i.produto_nome === "Horas";
+const qtdTxt = (i) => `${inteiro(i.quantidade)} ${ehHora(i) ? "h" : "pç"}`;
+const resumoQtd = (lista) => {
+  const h = lista.filter(ehHora).reduce((a, i) => a + Number(i.quantidade), 0);
+  const pc = lista.filter((i) => !ehHora(i)).reduce((a, i) => a + Number(i.quantidade), 0);
+  return [pc ? `${inteiro(pc)} peças` : "", h ? `${inteiro(h)} h` : ""].filter(Boolean).join(" · ") || "0";
+};
+const TIPOS = { externa: "Mão de obra externa", interna: "Mão de obra interna", fixos: "Funcionários fixos" };
+const FORMAS = { producao: "Por produção", hora: "Por hora" };
+const formaTxt = (m) => (porHora(m) ? `Por hora${valorHoraDe(m) != null ? ` · ${moeda(valorHoraDe(m))}` : ""}` : "Por produção");
+
 const linkWhats = (n) => (n ? `https://wa.me/55${String(n).replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "")}` : "");
 
 // ---------------------------------------------------------------
@@ -68,7 +94,7 @@ function marcarAba(aba) {
   $$("#abas button").forEach((x) => x.classList.toggle("ativo", x.dataset.aba === aba));
   const naBarra = ["inicio", "minha", "fechamentos"].includes(aba);
   $$("#navBaixo button").forEach((x) => x.classList.toggle("ativo", naBarra ? x.dataset.aba === aba : x.hasAttribute("data-mais")));
-  $("#fabLote").classList.toggle("hidden", !["inicio", "fechamentos"].includes(aba));
+  $("#fabLote").classList.toggle("hidden", aba !== "inicio");
   window.scrollTo(0, 0);
 }
 function irPara(aba) { marcarAba(aba); render(); }
@@ -87,8 +113,8 @@ $("#fabLote").onclick = () => modalNovoLote();
 
 function menuMais() {
   const itens = [
-    ["maos", "👥", "Cadastros mão de obra"],
-    ["servicos", "🧵", "Cadastros serviços"],
+    ["maos", "👥", "Cadastro de mão de obra"],
+    ["servicos", "🧵", "Produtos e serviços"],
     ["admin", "⚙️", "Administrativo"],
   ];
   const m = abrirModal({
@@ -106,6 +132,7 @@ function menuMais() {
 
 async function render() {
   try {
+    await carregarConf();
     if (abaAtual === "inicio") await renderInicio();
     if (abaAtual === "minha") await renderMinha();
     if (abaAtual === "maos") await renderMaos();
@@ -134,38 +161,179 @@ async function carregarCatalogo() {
 // INÍCIO — botões com os nomes das mãos de obra
 // ===============================================================
 async function renderInicio() {
-  const [maos, abertos] = await Promise.all([
+  const mes = inicioMes();
+  const [maos, abertos, ganhosMes, fixos] = await Promise.all([
     carregarMaos(),
     q(sb.from("v_lotes").select("id, mao_de_obra_id, mao_de_obra_nome, produto_nome, servico_nome, quantidade, valor_aberto, qtd_falta, aviso_em, aviso_mensagem").eq("status", "aberto")),
+    q(sb.from("v_ganhos").select("mao_de_obra_id, origem, quantidade, valor, pago").eq("mes_ref", mes)),
+    moduloAtivo("fixos") ? q(sb.from("funcionarios_fixos").select("*").eq("ativo", true).order("nome")) : Promise.resolve([]),
   ]);
   const porMao = {};
+  const pm = (id) => (porMao[id] ??= { lotes: 0, valor: 0, avisos: 0, horas: 0, valorHoras: 0 });
   abertos.forEach((l) => {
-    porMao[l.mao_de_obra_id] ??= { lotes: 0, valor: 0, avisos: 0 };
-    porMao[l.mao_de_obra_id].lotes += 1;
-    porMao[l.mao_de_obra_id].valor += Number(l.valor_aberto);
-    if (l.aviso_em) porMao[l.mao_de_obra_id].avisos += 1;
+    const x = pm(l.mao_de_obra_id);
+    x.lotes += 1; x.valor += Number(l.valor_aberto);
+    if (l.aviso_em) x.avisos += 1;
   });
+  ganhosMes.filter((g) => g.origem === "hora").forEach((g) => { const x = pm(g.mao_de_obra_id); x.horas += Number(g.quantidade); x.valorHoras += Number(g.valor); });
   const avisos = abertos.filter((l) => l.aviso_em).sort((a, b) => (a.aviso_em < b.aviso_em ? 1 : -1));
+  const emAberto = soma(abertos, "valor_aberto");
+  const aPagar = ganhosMes.filter((g) => !g.pago).reduce((a, g) => a + Number(g.valor), 0);
+  const comLote = new Set(abertos.map((l) => l.mao_de_obra_id)).size;
+  $("#tcPonto").classList.toggle("hidden", !avisos.length);
+
+  const externas = maos.filter((m) => tipoDe(m) === "externa");
+  const internas = maos.filter((m) => tipoDe(m) === "interna");
+  const temHora = maos.some(porHora);
+
+  const tile = (m) => {
+    const a = porMao[m.id];
+    let info, ativo;
+    if (porHora(m)) { ativo = !!a?.horas; info = ativo ? `${inteiro(a.horas)} h no mês · ${moeda(a.valorHoras)}` : "sem horas no mês"; }
+    else { ativo = !!a?.lotes; info = ativo ? `${a.lotes} lote${a.lotes > 1 ? "s" : ""} · ${moeda(a.valor)}` : "sem lote em aberto"; }
+    return `<button class="btn-nome ${tipoDe(m)} ${ativo ? "" : "inativo"}" data-ficha="${m.id}" data-nome="${esc(m.nome.toLowerCase())}">
+      ${porHora(m) ? `<span class="tag-hora" title="Paga por hora">⏱</span>` : ""}${esc(maiusc(m.nome))}
+      <small>${info}</small>
+      ${a?.avisos ? `<span class="bandeira">✋ terminou ${a.avisos > 1 ? a.avisos + " lotes" : "1 lote"}</span>` : ""}</button>`;
+  };
+  const secao = (k, pessoas, acoes, conteudo) => `
+    <section class="secao-inicio" data-secao="${k}">
+      <div class="secao-cab">
+        <div><h2><i class="ponto ${k}"></i>${TIPOS[k]}</h2><span>${pessoas} ${pessoas === 1 ? "pessoa" : "pessoas"}</span></div>
+        <div class="secao-acoes">${acoes}</div>
+      </div>
+      ${conteudo}
+    </section>`;
+  const vazioSecao = (k) => `<div class="secao-vazia">Ninguém cadastrado aqui ainda. <button class="link" data-cadastrar="${k}">Cadastrar agora</button></div>`;
+  const grade = (lista, k) => (lista.length ? `<div class="grade-nomes">${lista.map(tile).join("")}</div>` : vazioSecao(k));
+  const botoesMo = (lista) => [
+    lista.some((m) => !porHora(m)) ? `<button class="btn acento peq" data-novolote>＋ Enviar lote</button>` : "",
+    lista.some(porHora) ? `<button class="btn sec peq" data-horas>⏱ Lançar horas</button>` : "",
+  ].join("");
 
   main.innerHTML = `
-    <div class="titulo-pagina">Mãos de obra</div>
-    <div class="section-head"><div class="data-hoje">${dataBR(new Date())}</div>
-      ${maos.length ? `<button class="btn acento" id="btnNovoLote">＋ Enviar lote</button>` : ""}</div>
-    ${avisos.length ? `<div class="lista-avisos"><div class="card">
+    <div class="topo-pagina pg-inicio">
+      <div class="so-pc"><h1>Início</h1><p>${new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p></div>
+      <div class="topo-acoes">
+        <label class="busca"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="buscaNome" type="search" placeholder="Buscar pessoa…" autocomplete="off"></label>
+        <button class="sino" id="sinoInicio" title="Avisos" aria-label="Avisos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>${avisos.length ? `<b>${avisos.length}</b>` : ""}</button>
+        ${maos.some((m) => !porHora(m)) ? `<button class="btn acento" id="btnNovoLote">＋ Enviar lote</button>` : ""}
+      </div>
+    </div>
+
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Em aberto com a mão de obra</span><strong>${moeda(emAberto)}</strong><small>${abertos.length} lote${abertos.length === 1 ? "" : "s"} em aberto</small></div>
+      <div class="kpi-v2"><span>A pagar no mês</span><strong>${moeda(aPagar)}</strong><small>finalizado e ainda não pago</small></div>
+      <div class="kpi-v2"><span>Trabalhando agora</span><strong>${comLote}</strong><small>de ${maos.length} cadastrada${maos.length === 1 ? "" : "s"}</small></div>
+      <div class="kpi-v2 ${avisos.length ? "amarelo" : ""}"><span>Avisos</span><strong>${avisos.length}</strong><small>${avisos.length ? "terminaram lote" : "nenhum aviso novo"}</small></div>
+    </div>
+
+    ${avisos.length ? `<div class="lista-avisos" id="avisosInicio"><div class="card">
       <h3 style="margin:0 0 .4rem">✋ Avisaram que terminaram</h3>
       <ul class="lista-final">${avisos.map((l) => `<li><span><strong>${esc(l.mao_de_obra_nome)}</strong> – ${esc(l.produto_nome)}: ${esc(l.servico_nome)} – ${inteiro(l.qtd_falta)} pç
         <br><span class="small muted">${dataHoraBR(l.aviso_em)}${l.aviso_mensagem ? ` · “${esc(l.aviso_mensagem)}”` : ""}</span></span>
         <button class="btn peq" data-ficha="${l.mao_de_obra_id}">Abrir</button></li>`).join("")}</ul></div></div>` : ""}
-    ${maos.length ? `<div class="grade-nomes">${maos.map((m) => {
-      const a = porMao[m.id];
-      return `<button class="btn-nome ${a ? "" : "inativo"}" data-ficha="${m.id}">${esc(maiusc(m.nome))}
-        <small>${a ? `${a.lotes} lote${a.lotes > 1 ? "s" : ""} · ${moeda(a.valor)}` : "sem lote em aberto"}</small>
-        ${a?.avisos ? `<span class="bandeira">✋ terminou ${a.avisos > 1 ? a.avisos + " lotes" : "1 lote"}</span>` : ""}</button>`;
-    }).join("")}</div>`
-      : `<div class="card vazio">Nenhuma mão de obra cadastrada ainda.<br>Comece pela aba <strong>Cadastros serviços</strong> e depois <strong>Cadastros mão de obra</strong>.</div>`}`;
+
+    ${moduloAtivo("externa") ? secao("externa", externas.length, botoesMo(externas), grade(externas, "externa")) : ""}
+    ${moduloAtivo("interna") ? secao("interna", internas.length, botoesMo(internas), grade(internas, "interna")) : ""}
+    ${moduloAtivo("fixos") ? secao("fixos", fixos.length, `<button class="btn sec peq" data-cadastrar="fixos">＋ Cadastrar</button>`,
+      fixos.length ? `<div class="grade-nomes">${fixos.map((f) => `<button class="btn-nome fixo" data-fixo="${f.id}" data-nome="${esc(f.nome.toLowerCase())}">${esc(maiusc(f.nome))}
+        <small>${esc(f.cargo || "Funcionário fixo")}${f.salario != null ? ` · ${moeda(f.salario)}` : ""}</small></button>`).join("")}</div>` : vazioSecao("fixos")) : ""}
+    ${!moduloAtivo("externa") && !moduloAtivo("interna") && !moduloAtivo("fixos") ? `<div class="card vazio">Nenhum tipo de mão de obra está ativado. Ative em <strong>Administrativo → Tipos de mão de obra</strong>.</div>` : ""}
+    ${!maos.length && !fixos.length ? `<p class="muted small" style="text-align:center">Comece por <strong>Produtos e serviços</strong> e depois <strong>Mão de obra</strong>.</p>` : ""}`;
 
   $$("[data-ficha]", main).forEach((b) => (b.onclick = () => abrirFicha(b.dataset.ficha)));
+  $$("[data-fixo]", main).forEach((b) => (b.onclick = () => modalFixo(fixos.find((f) => f.id == b.dataset.fixo), renderInicio)));
+  $$("[data-novolote]", main).forEach((b) => (b.onclick = () => modalNovoLote()));
+  $$("[data-horas]", main).forEach((b) => (b.onclick = () => modalLancarHoras()));
+  $$("[data-cadastrar]", main).forEach((b) => (b.onclick = () => (b.dataset.cadastrar === "fixos" ? modalFixo({}, renderInicio) : modalNovaMo(b.dataset.cadastrar, renderInicio))));
   $("#btnNovoLote")?.addEventListener("click", () => modalNovoLote());
+  $("#sinoInicio").onclick = () => (avisos.length ? $("#avisosInicio").scrollIntoView({ behavior: "smooth" }) : aviso("Nenhum aviso novo."));
+  $("#buscaNome").oninput = (e) => {
+    const t = e.target.value.trim().toLowerCase();
+    $$("[data-nome]", main).forEach((b) => b.classList.toggle("hidden", !!t && !b.dataset.nome.includes(t)));
+  };
+  void temHora;
+}
+
+// ---------------------------------------------------------------
+// Ficha de quem recebe por hora
+// ---------------------------------------------------------------
+async function fichaHoras(mo) {
+  const mes = inicioMes();
+  const horas = await q(sb.from("v_horas").select("*").eq("mao_de_obra_id", mo.id).eq("mes_ref", mes).order("data", { ascending: false }));
+  const totH = soma(horas, "horas"), totV = soma(horas, "valor");
+  const aPagar = horas.filter((h) => !h.pago).reduce((a, h) => a + Number(h.valor), 0);
+  const vh = valorHoraDe(mo);
+  const m = abrirModal({
+    titulo: maiusc(mo.nome),
+    largo: true,
+    conteudo: `
+      <div class="ficha-topo">
+        <div class="ficha-contato">
+          <span class="selo parcial">${TIPOS[tipoDe(mo)]} · ${formaTxt(mo)}</span><br>
+          ${mo.whatsapp ? `📱 <a href="${linkWhats(mo.whatsapp)}" target="_blank" rel="noopener">${esc(mo.whatsapp)}</a><br>` : ""}
+          ${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong>` : ""}
+        </div>
+        <button type="button" class="btn acento" id="fichaHoras">⏱ Lançar horas</button>
+      </div>
+      <div class="totais">
+        <div class="total"><div class="r">Horas em ${nomeMes(mes).split(" ")[0].toLowerCase()}</div><div class="v">${inteiro(totH)} h</div></div>
+        <div class="total"><div class="r">Valor no mês</div><div class="v">${moeda(totV)}</div></div>
+        <div class="total escuro"><div class="r">A pagar</div><div class="v">${moeda(aPagar)}</div></div>
+      </div>
+      ${vh == null ? `<div class="alerta">Defina o valor da hora no cadastro de ${esc(mo.nome.split(" ")[0])} ou em Administrativo.</div>` : ""}
+      <h3>Horas lançadas em ${nomeMes(mes).toLowerCase()}</h3>
+      ${horas.length ? `<ul class="lista-final">${horas.map((h) => `<li>
+        <span>${diaMes(h.data)} – <strong>${inteiro(h.horas)} h</strong> × ${moeda(h.valor_hora)}${h.observacao ? `<br><span class="small muted">${esc(h.observacao)}</span>` : ""}</span>
+        <span style="white-space:nowrap"><strong class="num">${moeda(h.valor)}</strong>
+        ${h.pago ? selo("pago", "Pago") : `<button type="button" class="icon-btn" style="color:var(--bad);font-size:1rem" data-exh="${h.id}" title="Excluir">✕</button>`}</span></li>`).join("")}</ul>`
+        : `<p class="muted">Nenhuma hora lançada neste mês.</p>`}
+      <div class="soma-final"><span>TOTAL DO MÊS · ${inteiro(totH)} h</span><span>${moeda(totV)}</span></div>`,
+  });
+  $("#fichaHoras", m.form).onclick = () => { m.fechar(); modalLancarHoras(mo.id); };
+  $$("[data-exh]", m.form).forEach((b) => (b.onclick = async () => {
+    if (!(await confirmar("Excluir este lançamento de horas?", "Excluir"))) return;
+    try { await rpc("excluir_horas", { p_id: Number(b.dataset.exh) }); aviso("Lançamento excluído."); } catch (e) { aviso(e.message, true); }
+    m.fechar(); fichaHoras(mo); if (abaAtual === "inicio") renderInicio();
+  }));
+}
+
+async function modalLancarHoras(moId = "") {
+  const maos = (await carregarMaos()).filter(porHora);
+  if (!maos.length) return aviso("Ninguém está cadastrado para receber por hora. Mude a forma de pagamento no cadastro.", true);
+  abrirModal({
+    titulo: "Lançar horas",
+    conteudo: `
+      <div class="linha"><div><label>Quem trabalhou *</label><select name="mo" required><option value="">Selecione…</option>
+        ${maos.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div></div>
+      <div class="linha">
+        <div><label>Dia *</label><input name="data" type="date" value="${isoLocal()}" required></div>
+        <div><label>Horas trabalhadas *</label><input name="horas" type="number" min="0.25" max="24" step="0.25" inputmode="decimal" placeholder="Ex.: 8 ou 7,5" required></div>
+        <div><label>Valor da hora (R$)</label><input name="valor" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      </div>
+      <p class="muted small" style="margin-top:-.3rem">Meia hora = ,5 (ex.: 7,5 = sete horas e meia).</p>
+      <div class="linha"><div><label>Observação (opcional)</label><input name="obs" placeholder="Ex.: hora extra, sábado…"></div></div>
+      <div class="lote-total" style="margin:0 0 .8rem"><span>Total do dia</span><span id="prevHoras">R$ 0,00</span></div>
+      <button type="submit" class="btn bloco acento">Lançar</button>`,
+    aoAbrir: (f) => {
+      const atual = () => { const mo = maos.find((x) => x.id === f.mo.value); if (mo) f.valor.value = valorHoraDe(mo) ?? ""; prev(); };
+      const prev = () => ($("#prevHoras", f).textContent = moeda(Number(f.horas.value || 0) * Number(f.valor.value || 0)));
+      f.mo.onchange = atual; f.horas.oninput = f.valor.oninput = prev;
+      atual();
+    },
+    onSubmit: async (fd) => {
+      const mo = fd.get("mo"), h = Number(fd.get("horas"));
+      if (!mo) throw new Error("Escolha quem trabalhou.");
+      if (!(h > 0 && h <= 24)) throw new Error("Informe as horas (entre 0 e 24).");
+      if (fd.get("valor") === "") throw new Error("Informe o valor da hora.");
+      await rpc("lancar_horas", { p_mao_de_obra: mo, p_data: fd.get("data"), p_horas: h, p_valor_hora: Number(fd.get("valor")), p_observacao: fd.get("obs") || null });
+      aviso("Horas lançadas!");
+      if (abaAtual === "inicio") renderInicio();
+      if (moId) { const x = maos.find((y) => y.id === mo); if (x) fichaHoras(x); }
+    },
+  });
 }
 
 // ---------------------------------------------------------------
@@ -178,6 +346,7 @@ async function abrirFicha(moId) {
     q(sb.from("v_lotes").select("*").eq("mao_de_obra_id", moId).eq("status", "aberto").order("enviado_em")),
     q(sb.from("v_entregas").select("*").eq("mao_de_obra_id", moId).eq("mes_ref", mes).order("entregue_em", { ascending: false })),
   ]);
+  if (porHora(mo)) return fichaHoras(mo);
 
   const valorAberto = soma(abertos, "valor_aberto");
   const valorFinal = soma(entregasMes, "valor");
@@ -196,6 +365,7 @@ async function abrirFicha(moId) {
     conteudo: `
       <div class="ficha-topo">
         <div class="ficha-contato">
+          <span class="selo parcial">${TIPOS[tipoDe(mo)]} · Por produção</span><br>
           ${mo.whatsapp ? `📱 <a href="${linkWhats(mo.whatsapp)}" target="_blank" rel="noopener">${esc(mo.whatsapp)}</a><br>` : ""}
           ${mo.endereco ? `📍 ${esc(mo.endereco)}<br>` : ""}
           ${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong> <button type="button" class="btn sec peq" id="copiarPix">Copiar</button>` : ""}
@@ -294,9 +464,10 @@ async function abrirFicha(moId) {
 // Enviar lote (um produto + um serviço)
 // ---------------------------------------------------------------
 async function modalNovoLote(moId = "") {
-  const [maos, { produtos, servicos }] = await Promise.all([carregarMaos(), carregarCatalogo()]);
+  const [todas, { produtos, servicos }] = await Promise.all([carregarMaos(), carregarCatalogo()]);
+  const maos = todas.filter((m) => !porHora(m) && moduloAtivo(tipoDe(m)));
   const prodAtivos = produtos.filter((p) => p.ativo && servicos.some((s) => s.produto_id === p.id && s.ativo));
-  if (!maos.length) return aviso("Cadastre uma mão de obra primeiro.", true);
+  if (!maos.length) return aviso("Cadastre uma mão de obra que recebe por produção primeiro.", true);
   if (!prodAtivos.length) return aviso("Cadastre um produto com pelo menos um serviço primeiro.", true);
 
   const linhaItem = () => `<div class="item-lote">
@@ -316,7 +487,10 @@ async function modalNovoLote(moId = "") {
     titulo: "Enviar lote",
     conteudo: `
       <div class="linha"><div><label>Mão de obra *</label><select name="mo" required>
-        <option value="">Selecione…</option>${maos.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div></div>
+        <option value="">Selecione…</option>${["externa", "interna"].map((t) => {
+          const l = maos.filter((x) => tipoDe(x) === t);
+          return l.length ? `<optgroup label="${TIPOS[t]}">${l.map((x) => `<option value="${x.id}" ${x.id === moId ? "selected" : ""}>${esc(x.nome)}</option>`).join("")}</optgroup>` : "";
+        }).join("")}</select></div></div>
       <div id="itens">${linhaItem()}</div>
       <button type="button" class="btn sec bloco" id="addItem" style="margin-bottom:.8rem">＋ Adicionar outro serviço</button>
       <div class="lote-total" style="margin:0 0 .8rem"><span id="qtdItens">Total</span><span id="prevTotal">R$ 0,00</span></div>
@@ -396,7 +570,7 @@ async function renderMinha() {
   const [entradas, distrib, entregasMes, empresas] = await Promise.all([
     q(sb.from("v_entradas").select("*").eq("mes_ref", mes).order("data", { ascending: false }).order("id", { ascending: false })),
     q(sb.from("v_distribuicao").select("*").order("produto_nome").order("servico_nome")),
-    q(sb.from("v_entregas").select("valor").eq("mes_ref", mes)),
+    q(sb.from("v_ganhos").select("valor").eq("mes_ref", mes)),
     q(sb.from("empresas").select("*").order("nome")),
   ]);
   const receber = soma(entradas, "valor_total");
@@ -408,8 +582,8 @@ async function renderMinha() {
   });
 
   main.innerHTML = `
-    <div class="titulo-pagina">Minha mão de obra</div>
-    <div class="section-head"><span class="muted small">Tudo o que o Bruno recebe das empresas para distribuir às mãos de obra.</span>
+    <div class="topo-pagina"><div><h1>Minha mão de obra</h1><p>Tudo o que o Bruno recebe das empresas para distribuir às mãos de obra.</p></div></div>
+    <div class="section-head"><span></span>
       <span style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
         <input type="month" id="mesMinha" value="${mesMinha}" style="width:auto">
         <button class="btn sec" id="btnEmpresas">🏢 Empresas</button>
@@ -621,67 +795,162 @@ function modalEmpresas(empresas) {
 // ===============================================================
 // CADASTROS MÃO DE OBRA
 // ===============================================================
-async function renderMaos() {
-  const maos = await carregarMaos(false);
-  main.innerHTML = `
-    <div class="titulo-pagina">Cadastros mão de obra</div>
-    <div class="section-head"><span class="muted small">Cada mão de obra entra no painel dela com usuário e senha.</span>
-      <button class="btn" id="novoMo">＋ Nova mão de obra</button></div>
-    ${maos.length ? `<div class="card tabela-wrap"><table>
-      <thead><tr><th>Nome</th><th>Usuário</th><th>WhatsApp</th><th>Endereço</th><th>Chave PIX</th><th>Pagamento</th><th>Situação</th><th></th></tr></thead>
-      <tbody>${maos.map((m) => `<tr>
-        <td><strong>${esc(m.nome)}</strong></td><td>${esc(m.usuario)}</td>
-        <td>${m.whatsapp ? `<a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : "—"}</td>
-        <td class="small">${esc(m.endereco || "—")}</td><td class="small">${esc(m.pix || "—")}</td>
-        <td class="small">${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</td>
-        <td>${m.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
-        <td class="right" style="white-space:nowrap">
-          <button class="btn sec peq" data-ed="${m.id}">Editar</button>
-          <button class="btn sec peq" data-senha="${m.id}">Login</button>
-          <button class="btn ${m.ativo ? "perigo" : "ok"} peq" data-at="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
-        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
+let filtroCad = "todos";
 
-  const campos = (m = {}) => `
+// Campos comuns do cadastro (externa ou interna)
+function camposMo(m = {}) {
+  const tipo = m.tipo || "externa";
+  const forma = m.forma_pagamento || CONF[`pag_padrao_${tipo}`] || "producao";
+  return `
     <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(m.nome)}" required></div></div>
+    <div class="linha">
+      <div><label>Tipo *</label><select name="tipo">${["externa", "interna"].map((k) => `<option value="${k}" ${tipo === k ? "selected" : ""}>${TIPOS[k]}</option>`).join("")}</select></div>
+      <div><label>Recebe *</label><select name="forma_pagamento">${Object.entries(FORMAS).map(([k, t]) => `<option value="${k}" ${forma === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      <div class="campo-hora ${forma === "hora" ? "" : "hidden"}"><label>Valor da hora (R$)</label><input name="valor_hora" type="number" min="0" step="0.01" value="${m.valor_hora ?? ""}" placeholder="${numConf("valor_hora_padrao") != null ? `padrão ${moeda(numConf("valor_hora_padrao"))}` : ""}"></div>
+    </div>
     <div class="linha">
       <div><label>WhatsApp</label><input name="whatsapp" value="${esc(m.whatsapp)}" inputmode="tel" placeholder="(11) 99999-9999"></div>
       <div><label>Chave PIX</label><input name="pix" value="${esc(m.pix)}" placeholder="CPF, telefone, e-mail ou aleatória"></div>
     </div>
     <div class="linha">
       <div><label>Endereço</label><input name="endereco" value="${esc(m.endereco)}"></div>
-      <div><label>Forma de pagamento</label><select name="frequencia_pagamento">${Object.entries(FREQUENCIAS).map(([k, t]) =>
+      <div><label>Fechamento</label><select name="frequencia_pagamento">${Object.entries(FREQUENCIAS).map(([k, t]) =>
         `<option value="${k}" ${(m.frequencia_pagamento || "mensal") === k ? "selected" : ""}>${t}</option>`).join("")}</select></div>
     </div>`;
+}
+function ligarCamposMo(f) {
+  const mostrar = () => $(".campo-hora", f).classList.toggle("hidden", f.forma_pagamento.value !== "hora");
+  f.forma_pagamento.onchange = mostrar;
+  f.tipo.onchange = () => { const p = CONF[`pag_padrao_${f.tipo.value}`]; if (p && !f.dataset.editando) { f.forma_pagamento.value = p; mostrar(); } };
+}
+const dadosMo = (fd) => ({
+  tipo: fd.get("tipo") || "externa",
+  forma_pagamento: fd.get("forma_pagamento") || "producao",
+  valor_hora: fd.get("forma_pagamento") === "hora" && fd.get("valor_hora") !== "" ? Number(fd.get("valor_hora")) : null,
+  frequencia_pagamento: fd.get("frequencia_pagamento") || "mensal",
+});
 
-  $("#novoMo").onclick = () => abrirModal({
-    titulo: "Nova mão de obra",
-    conteudo: `${campos()}
+function modalNovaMo(tipo = "externa", depois = renderMaos) {
+  if (tipo === "fixos") return modalFixo({}, depois);
+  abrirModal({
+    titulo: "Novo cadastro",
+    conteudo: `${camposMo({ tipo })}
       <div class="linha">
         <div><label>Usuário (login) *</label><input name="usuario" required autocapitalize="none" placeholder="ex.: adriana"></div>
         <div><label>Senha inicial *</label><input name="senha" required minlength="6" placeholder="mín. 6 caracteres"></div>
       </div>
       <button type="submit" class="btn bloco">Criar acesso</button>`,
+    aoAbrir: ligarCamposMo,
     onSubmit: async (fd) => {
-      const novo = await adminUsuarios({ acao: "criar", ...Object.fromEntries(fd) });
-      if (novo?.id && fd.get("frequencia_pagamento")) {
-        await q(sb.from("perfis").update({ frequencia_pagamento: fd.get("frequencia_pagamento") }).eq("id", novo.id));
-      }
+      const novo = await adminUsuarios({ acao: "criar", nome: fd.get("nome"), usuario: fd.get("usuario"), senha: fd.get("senha"),
+        whatsapp: fd.get("whatsapp"), pix: fd.get("pix"), endereco: fd.get("endereco") });
+      if (novo?.id) await q(sb.from("perfis").update(dadosMo(fd)).eq("id", novo.id));
       aviso(`Acesso criado! Usuário: ${String(fd.get("usuario")).trim().toLowerCase()}`);
-      renderMaos();
+      depois();
     },
   });
+}
+
+function modalFixo(f = {}, depois = renderMaos) {
+  abrirModal({
+    titulo: f.id ? `Editar ${f.nome}` : "Novo funcionário fixo",
+    conteudo: `
+      <p class="muted small" style="margin-top:0">Funcionário registrado, com salário mensal. Não tem login nem entra nos fechamentos.</p>
+      <div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(f.nome)}" required></div></div>
+      <div class="linha">
+        <div><label>Cargo / função</label><input name="cargo" value="${esc(f.cargo)}" placeholder="Ex.: Cortador"></div>
+        <div><label>Salário (R$)</label><input name="salario" type="number" min="0" step="0.01" value="${f.salario ?? ""}"></div>
+      </div>
+      <div class="linha">
+        <div><label>WhatsApp</label><input name="whatsapp" value="${esc(f.whatsapp)}" inputmode="tel"></div>
+        <div><label>Chave PIX</label><input name="pix" value="${esc(f.pix)}"></div>
+      </div>
+      <div class="linha"><div><label>Endereço</label><input name="endereco" value="${esc(f.endereco)}"></div></div>
+      ${f.id ? `<label style="display:flex;gap:.5rem;align-items:center;margin-bottom:.8rem"><input type="checkbox" name="ativo" style="width:auto" ${f.ativo ? "checked" : ""}> Ativo</label>` : ""}
+      <button type="submit" class="btn bloco">Salvar</button>`,
+    onSubmit: async (fd) => {
+      const nome = String(fd.get("nome") || "").trim();
+      if (!nome) throw new Error("Informe o nome.");
+      const d = { nome, cargo: fd.get("cargo") || null, salario: fd.get("salario") === "" ? null : Number(fd.get("salario")),
+        whatsapp: fd.get("whatsapp") || null, pix: fd.get("pix") || null, endereco: fd.get("endereco") || null };
+      if (f.id) await q(sb.from("funcionarios_fixos").update({ ...d, ativo: fd.get("ativo") === "on" }).eq("id", f.id));
+      else await q(sb.from("funcionarios_fixos").insert(d));
+      aviso("Salvo!"); depois();
+    },
+  });
+}
+
+async function renderMaos() {
+  const [maos, fixos] = await Promise.all([
+    carregarMaos(false),
+    q(sb.from("funcionarios_fixos").select("*").order("nome")),
+  ]);
+  const filtros = [["todos", "Todos"], ["externa", "Externa"], ["interna", "Interna"], ["fixos", "Fixos"]]
+    .filter(([k]) => k === "todos" || moduloAtivo(k) || (k === "fixos" ? fixos.length : maos.some((m) => tipoDe(m) === k)));
+  if (!filtros.some(([k]) => k === filtroCad)) filtroCad = "todos";
+  const lista = filtroCad === "todos" ? maos : filtroCad === "fixos" ? [] : maos.filter((m) => tipoDe(m) === filtroCad);
+  const verFixos = (filtroCad === "todos" && (moduloAtivo("fixos") || fixos.length)) || filtroCad === "fixos";
+  const cont = (k) => (k === "todos" ? maos.length + fixos.length : k === "fixos" ? fixos.length : maos.filter((m) => tipoDe(m) === k).length);
+
+  main.innerHTML = `
+    <div class="topo-pagina">
+      <div><h1>Mão de obra</h1><p>Cadastro de quem trabalha com o Bruno. Externa e interna entram no painel com usuário e senha.</p></div>
+      <div class="topo-acoes"><button class="btn acento" id="novoMo">＋ Novo cadastro</button></div>
+    </div>
+    <div class="seg filtros-cad">${filtros.map(([k, t]) => `<button class="${k === filtroCad ? "ativo" : ""}" data-filtro="${k}">${t} <b>${cont(k)}</b></button>`).join("")}</div>
+    ${filtroCad !== "fixos" ? (lista.length ? `<div class="card tabela-wrap"><table>
+      <thead><tr><th>Nome</th><th>Tipo</th><th>Recebe</th><th>Usuário</th><th>WhatsApp</th><th>Chave PIX</th><th>Fechamento</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${lista.map((m) => `<tr>
+        <td><strong>${esc(m.nome)}</strong></td>
+        <td><span class="chip-tipo ${tipoDe(m)}">${tipoDe(m) === "interna" ? "Interna" : "Externa"}</span></td>
+        <td class="small">${formaTxt(m)}</td>
+        <td>${esc(m.usuario)}</td>
+        <td>${m.whatsapp ? `<a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : "—"}</td>
+        <td class="small">${esc(m.pix || "—")}</td>
+        <td class="small">${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</td>
+        <td>${m.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
+        <td class="right" style="white-space:nowrap">
+          <button class="btn sec peq" data-ed="${m.id}">Editar</button>
+          <button class="btn sec peq" data-senha="${m.id}">Login</button>
+          <button class="btn ${m.ativo ? "perigo" : "ok"} peq" data-at="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
+        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Ninguém cadastrado${filtroCad === "todos" ? "" : ` como ${TIPOS[filtroCad].toLowerCase()}`}.</div>`) : ""}
+    ${verFixos ? `<h2 class="sub-cad">Funcionários fixos</h2>
+      ${fixos.length ? `<div class="card tabela-wrap"><table>
+        <thead><tr><th>Nome</th><th>Cargo</th><th class="right">Salário</th><th>WhatsApp</th><th>Chave PIX</th><th>Situação</th><th></th></tr></thead>
+        <tbody>${fixos.map((f) => `<tr><td><strong>${esc(f.nome)}</strong></td><td>${esc(f.cargo || "—")}</td>
+          <td class="right num">${f.salario != null ? moeda(f.salario) : "—"}</td>
+          <td>${f.whatsapp ? `<a href="${linkWhats(f.whatsapp)}" target="_blank" rel="noopener">${esc(f.whatsapp)}</a>` : "—"}</td>
+          <td class="small">${esc(f.pix || "—")}</td><td>${f.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
+          <td class="right"><button class="btn sec peq" data-edfixo="${f.id}">Editar</button></td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="card vazio">Nenhum funcionário fixo. <button class="link" id="novoFixo">Cadastrar</button></div>`}` : ""}`;
+
+  $$("[data-filtro]", main).forEach((b) => (b.onclick = () => { filtroCad = b.dataset.filtro; renderMaos(); }));
+  $("#novoMo").onclick = () => {
+    if (filtroCad !== "todos") return modalNovaMo(filtroCad);
+    const ops = ["externa", "interna", "fixos"].filter((k) => moduloAtivo(k));
+    if (ops.length === 1) return modalNovaMo(ops[0]);
+    const m = abrirModal({
+      titulo: "Novo cadastro",
+      conteudo: `<p class="muted small" style="margin-top:0">Que tipo de pessoa você vai cadastrar?</p>
+        <div class="menu-mais">${(ops.length ? ops : ["externa", "interna", "fixos"]).map((k) => `<button type="button" data-novo="${k}"><i>${k === "externa" ? "🏠" : k === "interna" ? "🏭" : "🪪"}</i>${TIPOS[k]}</button>`).join("")}</div>`,
+    });
+    $$("[data-novo]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); modalNovaMo(b.dataset.novo); }));
+  };
+  $("#novoFixo")?.addEventListener("click", () => modalFixo());
+  $$("[data-edfixo]", main).forEach((b) => (b.onclick = () => modalFixo(fixos.find((x) => x.id == b.dataset.edfixo))));
 
   $$("[data-ed]", main).forEach((b) => (b.onclick = () => {
     const m = maos.find((x) => x.id === b.dataset.ed);
     abrirModal({
       titulo: `Editar ${m.nome}`,
-      conteudo: `${campos(m)}<p class="muted small">Usuário: <strong>${esc(m.usuario)}</strong> (não pode ser alterado)</p>
+      conteudo: `${camposMo(m)}<p class="muted small">Usuário: <strong>${esc(m.usuario)}</strong> (para mudar, use o botão Login)</p>
         <button type="submit" class="btn bloco">Salvar</button>`,
+      aoAbrir: (f) => { f.dataset.editando = "1"; ligarCamposMo(f); },
       onSubmit: async (fd) => {
         if (!fd.get("nome")) throw new Error("Informe o nome.");
         await q(sb.from("perfis").update({
           nome: fd.get("nome"), whatsapp: fd.get("whatsapp") || null, pix: fd.get("pix") || null, endereco: fd.get("endereco") || null,
-          frequencia_pagamento: fd.get("frequencia_pagamento") || "mensal",
+          ...dadosMo(fd),
         }).eq("id", m.id));
         aviso("Salvo!"); renderMaos();
       },
@@ -728,9 +997,8 @@ async function renderServicos() {
   const lucroTxt = (s) => s.valor_cliente == null ? `<span class="muted small">—</span>`
     : `<span class="${s.valor_cliente - s.valor_unitario >= 0 ? "lucro-pos" : "lucro-neg"}">${moeda(s.valor_cliente - s.valor_unitario)}</span>`;
   main.innerHTML = `
-    <div class="titulo-pagina">Cadastros serviços</div>
-    <div class="section-head"><span class="muted small">Cada serviço tem dois valores por peça: o que a <strong>empresa paga</strong> ao Bruno e o que ele <strong>paga à mão de obra</strong>.</span>
-      <button class="btn" id="novoProduto">＋ Novo produto</button></div>
+    <div class="topo-pagina"><div><h1>Produtos e serviços</h1><p>Cada serviço tem dois valores por peça: o que a <strong>empresa paga</strong> ao Bruno e o que ele <strong>paga à mão de obra</strong>.</p></div>
+      <div class="topo-acoes"><button class="btn acento" id="novoProduto">＋ Novo produto</button></div></div>
     ${produtos.length ? `<div class="grid cards-largos">${produtos.map((p) => {
       const lista = servicos.filter((s) => s.produto_id === p.id);
       return `<div class="card produto-card ${p.ativo ? "" : "inativo"}">
@@ -818,21 +1086,45 @@ let refFech = isoLocal();
 
 async function renderFechamentos() {
   const p = periodo(tipoFech, refFech);
-  const [entregas, abertos, maos, pags] = await Promise.all([
-    q(sb.from("v_entregas").select("*").gte("dia", p.inicio).lte("dia", p.fim).order("produto_nome").order("servico_nome")),
+  const [ganhos, abertos, maos, pags] = await Promise.all([
+    q(sb.from("v_ganhos").select("*").gte("dia", p.inicio).lte("dia", p.fim).order("produto_nome").order("servico_nome")),
     q(sb.from("v_lotes").select("mao_de_obra_id, valor_aberto").eq("status", "aberto")),
     carregarMaos(false),
     q(sb.from("pagamentos").select("*").lte("inicio", p.fim).gte("fim", p.inicio).order("pago_em")),
   ]);
   const por = {};
-  const g = (id) => (por[id] ??= { total: 0, pago: 0, qtd: 0, aberto: 0, entregas: [] });
-  entregas.forEach((e) => { const x = g(e.mao_de_obra_id); x.total += Number(e.valor); x.qtd += e.quantidade; if (e.pago) x.pago += Number(e.valor); x.entregas.push(e); });
+  const g = (id) => (por[id] ??= { total: 0, pago: 0, aberto: 0, entregas: [] });
+  ganhos.forEach((e) => { const x = g(e.mao_de_obra_id); x.total += Number(e.valor); if (e.pago) x.pago += Number(e.valor); x.entregas.push(e); });
   abertos.forEach((l) => { g(l.mao_de_obra_id).aberto += Number(l.valor_aberto); });
-  const lista = maos.filter((m) => m.ativo || por[m.id]?.total);
   const tot = Object.values(por).reduce((a, x) => ({ total: a.total + x.total, pago: a.pago + x.pago, aberto: a.aberto + x.aberto }), { total: 0, pago: 0, aberto: 0 });
 
+  const cartao = (m) => {
+    const x = por[m.id] || { total: 0, pago: 0, aberto: 0, entregas: [] };
+    const falta = x.total - x.pago;
+    const receber = x.aberto + falta;
+    const horas = x.entregas.filter(ehHora).reduce((a, e) => a + Number(e.quantidade), 0);
+    return `<button class="cartao-fech ${receber ? "" : "zerado"} ${tipoDe(m)}" data-det="${m.id}">
+      <span class="nome">${esc(maiusc(m.nome))}<small>${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}${porHora(m) ? " · por hora" : ""}</small></span>
+      <span class="valor">R$ <b>${moeda(receber).replace("R$", "").trim()}</b></span>
+      <span class="extra">${porHora(m) && horas ? `${inteiro(horas)} h × ${moeda(valorHoraDe(m) ?? 0)}` : ""}</span>
+      ${x.total && !falta && !x.aberto ? `<span class="tag-pago">PAGO</span>` : ""}
+    </button>`;
+  };
+  const secao = (k) => {
+    const lista = maos.filter((m) => tipoDe(m) === k && (m.ativo || por[m.id]?.total));
+    if (!moduloAtivo(k) && !lista.some((m) => por[m.id]?.total)) return "";
+    const s = lista.reduce((a, m) => { const x = por[m.id]; return x ? a + x.aberto + x.total - x.pago : a; }, 0);
+    return `<section class="secao-inicio" data-secao="${k}">
+      <div class="secao-cab"><div><h2><i class="ponto ${k}"></i>${TIPOS[k]}</h2><span>${lista.length} ${lista.length === 1 ? "pessoa" : "pessoas"}</span></div>
+        <div class="secao-total">A receber <strong>${moeda(s)}</strong></div></div>
+      ${lista.length ? `<div class="grade-fech">${lista.map(cartao).join("")}</div>` : `<div class="secao-vazia">Ninguém aqui neste período.</div>`}
+    </section>`;
+  };
+
   main.innerHTML = `
-    <div class="titulo-pagina">Fechamentos</div>
+    <div class="topo-pagina">
+      <div><h1>Fechamentos</h1><p>Valor em verde = lotes em aberto + o que já foi finalizado (peças ou horas) e ainda não foi pago.</p></div>
+    </div>
     <div class="barra-periodo">
       <div class="seg">${Object.entries(FREQUENCIAS).map(([k, t]) => `<button class="${k === tipoFech ? "ativo" : ""}" data-tipo="${k}">${t}</button>`).join("")}</div>
       <div class="nav-periodo">
@@ -842,23 +1134,13 @@ async function renderFechamentos() {
         <button class="btn sec peq" id="perHoje">Hoje</button>
       </div>
     </div>
-    <div class="totais">
-      <div class="total escuro"><div class="r">Total a receber</div><div class="v">${moeda(tot.aberto + tot.total - tot.pago)}</div></div>
-      <div class="total amarelo"><div class="r">Em aberto com as mãos de obra</div><div class="v">${moeda(tot.aberto)}</div></div>
-      <div class="total"><div class="r">Finalizado no período</div><div class="v">${moeda(tot.total)}</div></div>
-      <div class="total"><div class="r">Já pago</div><div class="v">${moeda(tot.pago)}</div></div>
+    <div class="kpis-v2">
+      <div class="kpi-v2 escuro"><span>Total a receber</span><strong>${moeda(tot.aberto + tot.total - tot.pago)}</strong></div>
+      <div class="kpi-v2 amarelo"><span>Em aberto (lotes)</span><strong>${moeda(tot.aberto)}</strong></div>
+      <div class="kpi-v2"><span>Finalizado no período</span><strong>${moeda(tot.total)}</strong></div>
+      <div class="kpi-v2"><span>Já pago</span><strong>${moeda(tot.pago)}</strong></div>
     </div>
-    ${lista.length ? `<div class="grade-fech">${lista.map((m) => {
-      const x = por[m.id] || { total: 0, pago: 0, aberto: 0 };
-      const falta = x.total - x.pago;
-      const receber = x.aberto + falta;
-      return `<button class="cartao-fech ${receber ? "" : "zerado"}" data-det="${m.id}">
-        <span class="nome">${esc(maiusc(m.nome))}<small>${FREQUENCIAS[m.frequencia_pagamento] || "Mensal"}</small></span>
-        <span class="valor">R$ <b>${moeda(receber).replace("R$", "").trim()}</b></span>
-        ${x.total && !falta && !x.aberto ? `<span class="tag-pago">PAGO</span>` : ""}
-      </button>`;
-    }).join("")}</div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}
-    <p class="muted small" style="text-align:center">Valor em verde = lotes em aberto + o que ela já finalizou no período e ainda não foi pago. Clique no nome para ver o detalhe.</p>`;
+    ${maos.length ? secao("externa") + secao("interna") : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
 
   $$("[data-tipo]", main).forEach((b) => (b.onclick = () => { tipoFech = b.dataset.tipo; renderFechamentos(); }));
   $("#perAnt").onclick = () => { refFech = periodoAnterior(p).inicio; renderFechamentos(); };
@@ -866,41 +1148,43 @@ async function renderFechamentos() {
   $("#perHoje").onclick = () => { refFech = isoLocal(); renderFechamentos(); };
   $$("[data-det]", main).forEach((b) => (b.onclick = () => {
     const mo = maos.find((x) => x.id === b.dataset.det);
-    detalheFechamento(mo, por[mo.id] || { total: 0, pago: 0, qtd: 0, aberto: 0, entregas: [] }, pags.filter((x) => x.mao_de_obra_id === mo.id), p);
+    detalheFechamento(mo, por[mo.id] || { total: 0, pago: 0, aberto: 0, entregas: [] }, pags.filter((x) => x.mao_de_obra_id === mo.id), p);
   }));
 }
 
-// Agrupa entregas por produto + serviço + preço
+// Agrupa peças/horas por produto + serviço + preço
 function agruparEntregas(entregas) {
   const m = {};
   entregas.forEach((e) => {
     const k = `${e.produto_nome}|${e.servico_nome}|${e.valor_unitario}`;
-    m[k] ??= { produto_nome: e.produto_nome, servico_nome: e.servico_nome, valor_unitario: e.valor_unitario, quantidade: 0, valor: 0, pago: 0 };
-    m[k].quantidade += e.quantidade; m[k].valor += Number(e.valor); if (e.pago) m[k].pago += Number(e.valor);
+    m[k] ??= { origem: e.origem || "producao", produto_nome: e.produto_nome, servico_nome: e.servico_nome, valor_unitario: e.valor_unitario, quantidade: 0, valor: 0, pago: 0 };
+    m[k].quantidade += Number(e.quantidade); m[k].valor += Number(e.valor); if (e.pago) m[k].pago += Number(e.valor);
   });
-  return Object.values(m).sort((a, b) => (a.produto_nome + a.servico_nome).localeCompare(b.produto_nome + b.servico_nome));
+  return Object.values(m).sort((a, b) => (ehHora(a) - ehHora(b)) || (a.produto_nome + a.servico_nome).localeCompare(b.produto_nome + b.servico_nome));
 }
+const nomeItem = (i) => (ehHora(i) ? "Horas trabalhadas" : `${i.produto_nome} · ${i.servico_nome}`);
+const unidade = (i) => (ehHora(i) ? "/hora" : "/peça");
 
 function detalheFechamento(mo, x, pags, p) {
   const linhas = agruparEntregas(x.entregas);
   const falta = x.total - x.pago;
-  const r = { mao_de_obra_nome: mo.nome, quantidade: x.qtd, valor_total: x.total };
+  const r = { mao_de_obra_nome: mo.nome, qtd: resumoQtd(linhas), valor_total: x.total };
   const m = abrirModal({
     titulo: `${maiusc(mo.nome)} — ${p.rotulo}`,
     largo: true,
     conteudo: `
-      <div class="ficha-topo"><div class="ficha-contato">${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong> · ` : ""}Pagamento ${(FREQUENCIAS[mo.frequencia_pagamento] || "Mensal").toLowerCase()}</div>
+      <div class="ficha-topo"><div class="ficha-contato"><span class="selo parcial">${TIPOS[tipoDe(mo)]} · ${formaTxt(mo)}</span><br>${mo.pix ? `PIX: <strong>${esc(mo.pix)}</strong> · ` : ""}Fechamento ${(FREQUENCIAS[mo.frequencia_pagamento] || "Mensal").toLowerCase()}</div>
         <span>${x.total ? (falta ? selo("aberto", `Falta pagar ${moeda(falta)}`) : selo("pago", "Tudo pago")) : ""}</span></div>
       ${x.aberto ? `<p class="small" style="margin:.4rem 0 0">Em aberto com ela agora (ainda não finalizado): <strong>${moeda(x.aberto)}</strong></p>` : ""}
       ${linhas.length ? `<div class="tabela-wrap" style="margin-top:.6rem"><table>
-        <thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th><th>Situação</th></tr></thead>
-        <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td>
-          <td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td>
+        <thead><tr><th>Produto · serviço</th><th class="right">Quantidade</th><th class="right">Valor unit.</th><th class="right">Valor</th><th>Situação</th></tr></thead>
+        <tbody>${linhas.map((i) => `<tr><td>${esc(nomeItem(i))}</td><td class="right num">${qtdTxt(i)}</td>
+          <td class="right num">${moeda(i.valor_unitario)}${unidade(i)}</td><td class="right num">${moeda(i.valor)}</td>
           <td>${i.pago >= i.valor ? selo("pago", "Pago") : i.pago ? selo("aberto", "Parte paga") : selo("aberto", "A pagar")}</td></tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="right num">${inteiro(x.qtd)}</td><td></td><td class="right num">${moeda(x.total)}</td><td></td></tr></tfoot>
+        <tfoot><tr><td>Total</td><td class="right num">${r.qtd}</td><td></td><td class="right num">${moeda(x.total)}</td><td></td></tr></tfoot>
       </table></div>` : `<p class="muted">Nada finalizado neste período.</p>`}
       ${pags.length ? `<h3 style="margin-top:1rem">Pagamentos registrados</h3><ul class="lista-final">${pags.map((pg) => `<li>
-        <span>${dataBR(pg.pago_em)} – ${esc(rotuloPeriodo(pg.tipo, pg.inicio))}<br><span class="small muted">${inteiro(pg.quantidade)} peças</span></span>
+        <span>${dataBR(pg.pago_em)} – ${esc(rotuloPeriodo(pg.tipo, pg.inicio))}</span>
         <span style="display:flex;gap:.5rem;align-items:center"><strong class="num">${moeda(pg.valor_total)}</strong>
         <button type="button" class="btn perigo peq" data-desfpag="${pg.id}">Desfazer</button></span></li>`).join("")}</ul>` : ""}
       ${linhas.length ? `<div class="acoes">
@@ -911,12 +1195,12 @@ function detalheFechamento(mo, x, pags, p) {
   });
   const f = m.form;
   $("#fPagar", f)?.addEventListener("click", async () => {
-    if (!(await confirmar(`Marcar ${moeda(falta)} de ${mo.nome} (${p.rotulo}) como pago? Essas entregas ficam travadas.`, "Marcar como pago"))) return;
+    if (!(await confirmar(`Marcar ${moeda(falta)} de ${mo.nome} (${p.rotulo}) como pago? Essas peças e horas ficam travadas.`, "Marcar como pago"))) return;
     try { await rpc("pagar_periodo", { p_mao_de_obra: mo.id, p_inicio: p.inicio, p_fim: p.fim, p_tipo: p.tipo }); aviso("Pagamento registrado!"); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
   });
   $$("[data-desfpag]", f).forEach((b) => (b.onclick = async () => {
-    if (!(await confirmar("Desfazer este pagamento? As entregas voltam para 'a pagar'.", "Desfazer"))) return;
+    if (!(await confirmar("Desfazer este pagamento? As peças e horas voltam para 'a pagar'.", "Desfazer"))) return;
     try { await rpc("desfazer_pagamento", { p_pagamento: Number(b.dataset.desfpag) }); aviso("Pagamento desfeito."); m.fechar(); renderFechamentos(); }
     catch (e) { aviso(e.message, true); }
   }));
@@ -933,9 +1217,9 @@ function imprimirRecibo(r, linhas, mo, rotulo) {
     <link rel="stylesheet" href="${new URL("css/style.css", location.href)}"></head><body style="background:#fff;padding:1.5rem">
     <h1>${esc(NOME_FABRICA)} — Recibo de serviços</h1>
     <p><strong>Mão de obra:</strong> ${esc(r.mao_de_obra_nome)}${mo.pix ? `<br><strong>PIX:</strong> ${esc(mo.pix)}` : ""}<br><strong>Período:</strong> ${esc(rotulo)}</p>
-    <table><thead><tr><th>Produto</th><th>Serviço</th><th class="right">Quantidade</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
-    <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)}</td><td>${esc(i.servico_nome)}</td><td class="right">${inteiro(i.quantidade)}</td><td class="right">${moeda(i.valor_unitario)}</td><td class="right">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
-    <tfoot><tr><td colspan="2">Total</td><td class="right">${inteiro(r.quantidade)}</td><td></td><td class="right">${moeda(r.valor_total)}</td></tr></tfoot></table>
+    <table><thead><tr><th>Produto · serviço</th><th class="right">Quantidade</th><th class="right">Valor unit.</th><th class="right">Valor</th></tr></thead>
+    <tbody>${linhas.map((i) => `<tr><td>${esc(nomeItem(i))}</td><td class="right">${qtdTxt(i)}</td><td class="right">${moeda(i.valor_unitario)}${unidade(i)}</td><td class="right">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td><td class="right">${r.qtd}</td><td></td><td class="right">${moeda(r.valor_total)}</td></tr></tfoot></table>
     <p style="margin-top:2.5rem">Recebi a importância de <strong>${moeda(r.valor_total)}</strong> referente aos serviços acima.</p>
     <p style="margin-top:3rem">_______________________________________<br>${esc(r.mao_de_obra_nome)}</p>
     <script>setTimeout(()=>print(),300)<\/script></body></html>`);
@@ -953,8 +1237,32 @@ async function renderAdmin(pre = {}) {
   ]);
   const nomeMo = (id) => maos.find((m) => m.id === id)?.nome ?? "—";
 
+  const seg = (k) => { const v = conf[`pag_padrao_${k}`] || "producao"; return `<div class="seg seg-radio">${Object.entries(FORMAS).map(([f, t]) =>
+    `<label><input type="radio" name="padrao_${k}" value="${f}" ${v === f ? "checked" : ""}><span>${t}</span></label>`).join("")}</div>`; };
+  const tipoCard = (k, desc) => `<div class="tipo-card ${moduloAtivo(k) ? "on" : ""}" data-tipo-card="${k}">
+      <div class="tipo-topo"><strong>${TIPOS[k]}</strong>
+        <label class="switch" title="Ativar / desativar"><input type="checkbox" data-mod="${k}" ${moduloAtivo(k) ? "checked" : ""}><span></span></label></div>
+      <p>${desc}</p>
+      ${k === "fixos" ? `<div class="tipo-nota">Salário mensal · sem login · não entra nos fechamentos</div>` : `<label class="mini">Forma de pagamento padrão</label>${seg(k)}`}
+    </div>`;
+
   main.innerHTML = `
-    <div class="titulo-pagina">Administrativo</div>
+    <div class="topo-pagina"><div><h1>Administrativo</h1><p>Configurações, pagamentos, relatórios, backup e acessos.</p></div></div>
+    <div class="card section" id="cardTipos">
+      <h2>Tipos de mão de obra</h2>
+      <p class="muted small" style="margin-top:0">Ative só o que a fábrica usa. O que estiver desligado some do Início, do cadastro e dos fechamentos.
+        A forma de pagamento padrão vale para cadastros novos — dá para mudar pessoa por pessoa.</p>
+      <div class="tipos-grade">
+        ${tipoCard("externa", "Quem leva o serviço para fazer em casa e devolve em lotes.")}
+        ${tipoCard("interna", "Quem trabalha dentro da fábrica.")}
+        ${tipoCard("fixos", "Funcionários registrados, com salário fixo.")}
+      </div>
+      <div class="linha" style="grid-template-columns:minmax(180px,260px) auto;align-items:end;margin:.9rem 0 0">
+        <div><label>Valor da hora padrão (R$)</label><input id="valorHoraPadrao" type="number" min="0" step="0.01" value="${numConf("valor_hora_padrao") ?? ""}" placeholder="Ex.: 12,00"></div>
+        <button class="btn" id="salvarTipos" type="button">Salvar configuração</button>
+      </div>
+    </div>
+
     <div class="card section" id="cardPagamentos">
       <h2>📩 Pagamentos</h2>
       <p class="muted small" style="margin-top:0">Escolha a mão de obra e o período e envie a notinha de fechamento. Ela aparece no painel da mão de obra.</p>
@@ -1014,7 +1322,7 @@ async function renderAdmin(pre = {}) {
           <h2>Notas enviadas</h2>
           ${notas.length ? `<ul class="lista-final">${notas.map((n) => `<li>
             <span>${dataBR(n.enviada_em)} – <strong>${esc(nomeMo(n.mao_de_obra_id))}</strong> – ${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}<br>
-              <span class="small muted">${inteiro(n.quantidade)} peças · ${moeda(n.valor_total)}</span></span>
+              <span class="small muted">${moeda(n.valor_total)}</span></span>
             ${n.lida_em ? selo("pronto", "Lida") : selo("aberto", "Não lida")}</li>`).join("")}</ul>`
             : `<p class="muted small">Nenhuma nota enviada ainda.</p>`}
         </div>
@@ -1060,6 +1368,7 @@ async function renderAdmin(pre = {}) {
       </div>
     </div>`;
 
+  ligarTipos();
   ligarCalculadora();
   ligarPagamentos(maos, pre);
   ligarRelatorio();
@@ -1083,6 +1392,25 @@ async function renderAdmin(pre = {}) {
     catch (err) { aviso(err.message, true); }
   });
   if (pre.moId) $("#cardPagamentos").scrollIntoView({ behavior: "smooth" });
+}
+
+// Tipos de mão de obra: liga/desliga e forma de pagamento padrão
+function ligarTipos() {
+  $$("[data-mod]", main).forEach((c) => (c.onchange = () => c.closest(".tipo-card").classList.toggle("on", c.checked)));
+  $("#salvarTipos").onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    const linhas = [];
+    $$("[data-mod]", main).forEach((c) => linhas.push({ chave: `modulo_${c.dataset.mod}`, valor: c.checked ? "sim" : "nao" }));
+    ["externa", "interna"].forEach((k) => linhas.push({ chave: `pag_padrao_${k}`, valor: $(`[name=padrao_${k}]:checked`, main)?.value || "producao" }));
+    const vh = $("#valorHoraPadrao").value;
+    if (vh !== "" && Number(vh) < 0) return aviso("O valor da hora não pode ser negativo.", true);
+    linhas.push({ chave: "valor_hora_padrao", valor: vh === "" ? null : String(Number(vh)) });
+    if (!linhas.some((l) => l.chave.startsWith("modulo_") && l.valor === "sim")) return aviso("Deixe pelo menos um tipo ativado.", true);
+    btn.disabled = true;
+    try { await q(sb.from("configuracoes").upsert(linhas)); await carregarConf(); aviso("Configuração salva!"); }
+    catch (e) { aviso(e.message, true); }
+    finally { btn.disabled = false; }
+  };
 }
 
 // Acessos: minha conta + login das mãos de obra
@@ -1134,8 +1462,8 @@ function ligarPagamentos(maos, pre = {}) {
   let per = periodo(selTipo.value, pre.ref || isoLocal());
   const textoWhats = (mo, linhas, total, qtd, msg) =>
     `Olá, ${mo.nome.split(" ")[0]}! Segue o fechamento — ${per.rotulo} — ${NOME_FABRICA}:\n\n` +
-    linhas.map((i) => `• ${i.produto_nome} – ${i.servico_nome}: ${inteiro(i.quantidade)} pç × ${moeda(i.valor_unitario)} = ${moeda(i.valor)}`).join("\n") +
-    `\n\nTotal: ${inteiro(qtd)} peças — *${moeda(total)}*` + (msg ? `\n\n${msg}` : "") +
+    linhas.map((i) => `• ${ehHora(i) ? "Horas trabalhadas" : `${i.produto_nome} – ${i.servico_nome}`}: ${qtdTxt(i)} × ${moeda(i.valor_unitario)} = ${moeda(i.valor)}`).join("\n") +
+    `\n\nTotal: ${qtd} — *${moeda(total)}*` + (msg ? `\n\n${msg}` : "") +
     `\n\nVocê também pode ver esta nota no seu painel.`;
 
   const carregar = async () => {
@@ -1144,18 +1472,18 @@ function ligarPagamentos(maos, pre = {}) {
     if (!mo) { area.innerHTML = ""; return; }
     area.innerHTML = `<p class="muted small">Carregando…</p>`;
     let entregas;
-    try { entregas = await q(sb.from("v_entregas").select("*").eq("mao_de_obra_id", mo.id).gte("dia", per.inicio).lte("dia", per.fim)); }
+    try { entregas = await q(sb.from("v_ganhos").select("*").eq("mao_de_obra_id", mo.id).gte("dia", per.inicio).lte("dia", per.fim)); }
     catch (e) { area.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; return; }
     const linhas = agruparEntregas(entregas);
     if (!linhas.length) { area.innerHTML = `<div class="alerta">${esc(mo.nome)} não tem nada finalizado em: ${esc(per.rotulo)}.</div>`; return; }
-    const total = soma(linhas, "valor"), qtd = soma(linhas, "quantidade"), pago = soma(linhas, "pago");
+    const total = soma(linhas, "valor"), qtd = resumoQtd(linhas), pago = soma(linhas, "pago");
     area.innerHTML = `
       <div class="nota-previa">
         <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Fechamento — ${esc(per.rotulo)}</span></div>
         <div class="small" style="margin-bottom:.4rem">Para: <strong>${esc(mo.nome)}</strong>${mo.pix ? ` · PIX: ${esc(mo.pix)}` : ""}</div>
-        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
-          <tbody>${linhas.map((i) => `<tr><td>${esc(i.produto_nome)} · ${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
-          <tfoot><tr><td>Total</td><td class="right num">${inteiro(qtd)}</td><td></td><td class="right num">${moeda(total)}</td></tr></tfoot></table>
+        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">Valor unit.</th><th class="right">Valor</th></tr></thead>
+          <tbody>${linhas.map((i) => `<tr><td>${esc(nomeItem(i))}</td><td class="right num">${qtdTxt(i)}</td><td class="right num">${moeda(i.valor_unitario)}${unidade(i)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+          <tfoot><tr><td>Total</td><td class="right num">${qtd}</td><td></td><td class="right num">${moeda(total)}</td></tr></tfoot></table>
         ${pago ? `<p class="small muted" style="margin:.4rem 0 0">Já pago neste período: ${moeda(pago)} · falta: ${moeda(total - pago)}</p>` : ""}
       </div>
       <div class="linha" style="margin-top:.7rem"><div><label>Mensagem (opcional)</label><input id="pagMsg" placeholder="Ex.: O PIX cai até sexta-feira."></div></div>
@@ -1199,7 +1527,7 @@ function ligarRelatorio() {
     try {
       [entradas, entregas, lotes] = await Promise.all([
         q(sb.from("v_entradas").select("*").eq("mes_ref", mes).order("empresa_nome").order("produto_nome").order("servico_nome")),
-        q(sb.from("v_entregas").select("*").eq("mes_ref", mes).order("mao_de_obra_nome")),
+        q(sb.from("v_ganhos").select("*").eq("mes_ref", mes).order("mao_de_obra_nome")),
         q(sb.from("v_lotes").select("servico_id, produto_nome, servico_nome, quantidade, status").gte("enviado_em", `${mes}T00:00:00-03:00`).lt("enviado_em", `${prox}T00:00:00-03:00`)),
       ]);
     } catch (e) { area.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; return; }
@@ -1231,7 +1559,7 @@ function ligarRelatorio() {
         <div class="total ${receita - custo >= 0 ? "verde" : "amarelo"}"><div class="r">Lucro estimado</div><div class="v">${moeda(receita - custo)}</div></div>
       </div>
       <p class="small muted">Peças recebidas: <strong>${inteiro(soma(entradas, "quantidade"))}</strong> · enviadas em lotes: <strong>${inteiro(soma(lotesValidos, "quantidade"))}</strong> ·
-        finalizadas: <strong>${inteiro(soma(entregas, "quantidade"))}</strong> · já pago às mãos de obra: <strong>${moeda(pago)}</strong> (falta ${moeda(custo - pago)})</p>
+        finalizadas: <strong>${resumoQtd(entregas)}</strong> · já pago às mãos de obra: <strong>${moeda(pago)}</strong> (falta ${moeda(custo - pago)})</p>
 
       <h3>1. Serviço que o Bruno pegou (por empresa)</h3>
       ${entradas.length ? tabela(`<th>Empresa</th><th>Produto · serviço</th><th class="right">Peças</th><th class="right">R$/peça</th><th class="right">Total</th>`,
@@ -1244,14 +1572,14 @@ function ligarRelatorio() {
         : `<p class="muted small">Nenhuma entrada neste mês.</p>`}
 
       <h3 style="margin-top:1.2rem">2. Serviço repassado às mãos de obra (finalizado)</h3>
-      ${entregas.length ? tabela(`<th>Mão de obra</th><th>Produto · serviço</th><th class="right">Peças</th><th class="right">R$/peça</th><th class="right">Valor</th><th>Situação</th>`,
+      ${entregas.length ? tabela(`<th>Mão de obra</th><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">Valor unit.</th><th class="right">Valor</th><th>Situação</th>`,
         Object.entries(porMao).map(([nome, lst]) => {
           const g = agruparEntregas(lst);
-          return g.map((i, n) => `<tr><td>${n ? "" : `<strong>${esc(nome)}</strong>`}</td><td>${esc(i.produto_nome)} · ${esc(i.servico_nome)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td>
+          return g.map((i, n) => `<tr><td>${n ? "" : `<strong>${esc(nome)}</strong>`}</td><td>${esc(nomeItem(i))}</td><td class="right num">${qtdTxt(i)}</td><td class="right num">${moeda(i.valor_unitario)}${unidade(i)}</td><td class="right num">${moeda(i.valor)}</td>
               <td>${i.pago >= i.valor ? "Pago" : i.pago ? "Parte paga" : "A pagar"}</td></tr>`).join("") +
-            `<tr class="subtotal"><td></td><td>Subtotal ${esc(nome)}</td><td class="right num">${inteiro(soma(lst, "quantidade"))}</td><td></td><td class="right num">${moeda(soma(lst, "valor"))}</td><td></td></tr>`;
+            `<tr class="subtotal"><td></td><td>Subtotal ${esc(nome)}</td><td class="right num">${resumoQtd(lst)}</td><td></td><td class="right num">${moeda(soma(lst, "valor"))}</td><td></td></tr>`;
         }).join(""),
-        `<tfoot><tr><td colspan="2">Total repassado</td><td class="right num">${inteiro(soma(entregas, "quantidade"))}</td><td></td><td class="right num">${moeda(custo)}</td><td></td></tr></tfoot>`)
+        `<tfoot><tr><td colspan="2">Total repassado</td><td class="right num">${resumoQtd(entregas)}</td><td></td><td class="right num">${moeda(custo)}</td><td></td></tr></tfoot>`)
         : `<p class="muted small">Nada finalizado pelas mãos de obra neste mês.</p>`}
 
       <h3 style="margin-top:1.2rem">3. Resumo por produto e serviço</h3>
@@ -1313,10 +1641,11 @@ function ligarCalculadora() {
 // Cópia local em planilha (CSV que abre no Excel)
 async function baixarCopia() {
   try {
-    const [lotes, entregas, entradas] = await Promise.all([
+    const [lotes, entregas, entradas, horas] = await Promise.all([
       q(sb.from("v_lotes").select("*").order("id")),
       q(sb.from("v_entregas").select("*").order("id")),
       q(sb.from("v_entradas").select("*").order("id")),
+      q(sb.from("v_horas").select("*").order("data")),
     ]);
     const n = (v) => String(Number(v || 0).toFixed(2)).replace(".", ",");
     const csv = (cab, linhas) => "﻿" + [cab, ...linhas].map((l) => l.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
@@ -1335,7 +1664,10 @@ async function baixarCopia() {
     setTimeout(() => baixar(`entradas-empresas-${hoje}.csv`, csv(
       ["Data", "Empresa", "Produto", "Serviço", "Peças", "Empresa paga R$/peça", "Total", "Observações"],
       entradas.map((e) => [dataBR(e.data), e.empresa_nome, e.produto_nome, e.servico_nome, e.quantidade, n(e.valor_unitario), n(e.valor_total), e.observacoes]))), 800);
-    aviso("Cópia baixada (3 arquivos).");
+    if (horas.length) setTimeout(() => baixar(`horas-${hoje}.csv`, csv(
+      ["Data", "Mão de obra", "Horas", "R$ por hora", "Valor", "Pago?", "Observação"],
+      horas.map((h) => [dataBR(h.data), h.mao_de_obra_nome, String(h.horas).replace(".", ","), n(h.valor_hora), n(h.valor), h.pago ? "Sim" : "Não", h.observacao]))), 1200);
+    aviso(`Cópia baixada (${horas.length ? 4 : 3} arquivos).`);
   } catch (e) { aviso(e.message, true); }
 }
 

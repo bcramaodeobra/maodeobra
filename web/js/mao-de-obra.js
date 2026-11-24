@@ -1,4 +1,4 @@
-// Painel da mão de obra — feito para o celular
+// Painel da mão de obra — feito para o celular (visual novo)
 import {
   sb, exigirPapel, sair, modalTrocarSenha, q, rpc, abrirModal, confirmar, aviso,
   moeda, inteiro, dataBR, isoLocal, inicioSemana, inicioMes, nomeMes,
@@ -7,46 +7,40 @@ import {
 import { NOME_FABRICA } from "../config.js";
 
 const perfil = await exigirPapel("mao_de_obra");
+const primeiroNome = perfil.nome.split(" ")[0];
+const porHora = perfil.forma_pagamento === "hora";
 $("#nomeFabrica").textContent = NOME_FABRICA;
-$("#quem").textContent = perfil.nome.split(" ")[0];
+$("#quem").textContent = `Olá, ${primeiroNome}! 👋`;
+$("#hojeTxt").textContent = dataBR(new Date()).slice(0, 5);
+if (porHora) $("#rotLotes").textContent = "Horas";
 
 const main = $("#conteudo");
-const lateral = $("#lateral");
-const fundo = $("#lateralFundo");
-const desktop = () => matchMedia("(min-width: 1000px)").matches;
 const soma = (l, c) => l.reduce((s, x) => s + Number(x[c] || 0), 0);
 const diaMes = (d) => dataBR(d).slice(0, 5);
-const primeiroNome = perfil.nome.split(" ")[0];
+const ehHora = (i) => i.origem === "hora" || i.produto === "Horas" || i.produto_nome === "Horas";
+const resumoQtd = (l) => {
+  const h = l.filter(ehHora).reduce((a, i) => a + Number(i.quantidade), 0);
+  const pc = l.filter((i) => !ehHora(i)).reduce((a, i) => a + Number(i.quantidade), 0);
+  return [pc ? `${inteiro(pc)} peças` : "", h ? `${inteiro(h)} h` : ""].filter(Boolean).join(" · ") || "—";
+};
 let abaAtual = "lotes";
 
-// ---------- Menu lateral recolhível ----------
-function lerPref() { try { return localStorage.getItem("lateral-recolhida") === "1"; } catch { return false; } }
-function salvarPref(v) { try { localStorage.setItem("lateral-recolhida", v ? "1" : "0"); } catch { /* ignore */ } }
-if (lerPref()) document.body.classList.add("lateral-recolhida");
-const abrirLateral = () => {
-  if (desktop()) { document.body.classList.remove("lateral-recolhida"); salvarPref(false); }
-  else { lateral.classList.add("aberta"); fundo.classList.remove("hidden"); }
-};
-const fecharLateral = () => {
-  if (desktop()) { document.body.classList.add("lateral-recolhida"); salvarPref(true); }
-  else { lateral.classList.remove("aberta"); fundo.classList.add("hidden"); }
-};
-$("#btnMenu").onclick = () => {
-  const aberta = desktop() ? !document.body.classList.contains("lateral-recolhida") : lateral.classList.contains("aberta");
-  aberta ? fecharLateral() : abrirLateral();
-};
-fundo.onclick = fecharLateral;
+$("#moNav").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-aba]");
+  if (!b) return;
+  abaAtual = b.dataset.aba; window.scrollTo(0, 0); render();
+});
 
 // ---------- Dados ----------
 async function carregar() {
   const desde = new Date(); desde.setDate(desde.getDate() - 70);
-  const [abertos, entregas, pagamentos, notas] = await Promise.all([
+  const [abertos, ganhos, pagamentos, notas] = await Promise.all([
     q(sb.from("v_lotes").select("*").eq("status", "aberto").order("enviado_em")),
-    q(sb.from("v_entregas").select("*").gte("dia", isoLocal(desde)).order("entregue_em", { ascending: false })),
+    q(sb.from("v_ganhos").select("*").gte("dia", isoLocal(desde)).order("dia", { ascending: false })),
     q(sb.from("pagamentos").select("*").order("pago_em", { ascending: false }).limit(12)),
     q(sb.from("notas").select("*").order("enviada_em", { ascending: false }).limit(12)),
   ]);
-  return { abertos, entregas, pagamentos, notas };
+  return { abertos, ganhos, pagamentos, notas };
 }
 
 async function render() {
@@ -56,51 +50,57 @@ async function render() {
 
   const freq = perfil.frequencia_pagamento || "mensal";
   const per = periodo(freq, isoLocal());
-  const hoje = isoLocal(), semana = inicioSemana(), mes = inicioMes();
-  const noPeriodo = d.entregas.filter((e) => e.dia >= per.inicio && e.dia <= per.fim);
+  const noPeriodo = d.ganhos.filter((e) => e.dia >= per.inicio && e.dia <= per.fim);
   const valorAberto = soma(d.abertos, "valor_aberto");
-  const finalizadoPer = soma(noPeriodo, "valor");
-  const naoPago = d.entregas.filter((e) => !e.pago).reduce((t, e) => t + Number(e.valor), 0);
-  const aReceber = valorAberto + naoPago;
+  const naoPago = d.ganhos.filter((e) => !e.pago).reduce((t, e) => t + Number(e.valor), 0);
   const notasNovas = d.notas.filter((n) => !n.lida_em);
+  const horasPer = noPeriodo.filter(ehHora).reduce((a, h) => a + Number(h.quantidade), 0);
 
-  renderLateral(d, { hoje, semana, mes, per, freq });
+  $$("#moNav button").forEach((b) => b.classList.toggle("ativo", b.dataset.aba === abaAtual));
+  $("#pontoNota").classList.toggle("hidden", !notasNovas.length);
 
-  main.innerHTML = `
-    <div class="mo-ola"><h1>Olá, ${esc(primeiroNome)}! 👋</h1><span class="muted small">${dataBR(new Date())}</span></div>
-
-    <div class="mo-hero">
-      <div class="r">A RECEBER</div>
-      <div class="v">${moeda(aReceber)}</div>
-      <div class="mo-hero-linha">
-        <div><span>Em aberto</span><strong>${moeda(valorAberto)}</strong></div>
-        <div><span>Finalizado ${freq === "mensal" ? "no mês" : freq === "semanal" ? "na semana" : "na quinzena"}</span><strong>${moeda(finalizadoPer)}</strong></div>
-        <div><span>Próximo fechamento</span><strong>${dataBR(per.fim).slice(0, 5)}</strong></div>
+  $("#hero").innerHTML = `
+    <div class="mo2-hero">
+      <span class="r">A RECEBER</span>
+      <strong class="v">${moeda(valorAberto + naoPago)}</strong>
+      <div class="mo2-hero-linha">
+        ${porHora
+          ? `<div><span>Horas ${freq === "mensal" ? "no mês" : freq === "semanal" ? "na semana" : "na quinzena"}</span><strong>${inteiro(horasPer)} h</strong></div>`
+          : `<div><span>Em aberto</span><strong>${moeda(valorAberto)}</strong></div>`}
+        <div><span>Finalizado no período</span><strong>${moeda(soma(noPeriodo, "valor"))}</strong></div>
+        <div><span>Fechamento</span><strong>${dataBR(per.fim).slice(0, 5)}</strong></div>
       </div>
     </div>
-
-    ${notasNovas.length ? `<button class="mo-alerta" id="verNotaNova">📩 Você recebeu ${notasNovas.length > 1 ? `${notasNovas.length} notas` : "uma nota"} de pagamento <span>Ver ›</span></button>` : ""}
-
-    <div class="mo-abas">
-      <button data-aba="lotes" class="${abaAtual === "lotes" ? "ativo" : ""}">Meus lotes <b>${d.abertos.length}</b></button>
-      <button data-aba="finalizados" class="${abaAtual === "finalizados" ? "ativo" : ""}">Finalizados</button>
-      <button data-aba="pagamentos" class="${abaAtual === "pagamentos" ? "ativo" : ""}">Pagamentos${notasNovas.length ? ` <b class="novo">${notasNovas.length}</b>` : ""}</button>
-    </div>
-    <div id="abaConteudo"></div>`;
-
-  $$(".mo-abas button", main).forEach((b) => (b.onclick = () => { abaAtual = b.dataset.aba; render(); }));
+    ${notasNovas.length ? `<button class="mo-alerta" id="verNotaNova">📩 Você recebeu ${notasNovas.length > 1 ? `${notasNovas.length} notas` : "uma nota"} de pagamento <span>Ver ›</span></button>` : ""}`;
   $("#verNotaNova")?.addEventListener("click", () => verNota(notasNovas[0]));
 
-  const area = $("#abaConteudo");
-  if (abaAtual === "lotes") abaLotes(area, d);
-  if (abaAtual === "finalizados") abaFinalizados(area, d, per, freq);
-  if (abaAtual === "pagamentos") abaPagamentos(area, d);
+  if (abaAtual === "lotes") (porHora ? abaHoras : abaLotes)(d, per);
+  if (abaAtual === "finalizados") abaFinalizados(d, per, freq);
+  if (abaAtual === "pagamentos") abaPagamentos(d);
+  if (abaAtual === "perfil") abaPerfil(d, per, freq);
+}
+
+const titulo = (t, extra = "") => `<div class="mo2-titulo"><h2>${t}</h2>${extra}</div>`;
+
+// ---------- Aba: minhas horas (quem recebe por hora) ----------
+function abaHoras(d, per) {
+  const horas = d.ganhos.filter(ehHora);
+  const doPer = horas.filter((h) => h.dia >= per.inicio && h.dia <= per.fim);
+  main.innerHTML = titulo("Minhas horas", `<span class="selo parcial">${esc(per.rotulo)}</span>`) +
+    (horas.length ? `<div class="card">
+      <ul class="lista-final">${horas.slice(0, 40).map((h) => `<li>
+        <span>${diaMes(h.dia)} – <strong>${inteiro(h.quantidade)} h</strong> × ${moeda(h.valor_unitario)}</span>
+        <span class="right"><strong class="num">${moeda(h.valor)}</strong><br>${h.pago ? selo("pago", "Pago") : selo("aberto", "A receber")}</span></li>`).join("")}</ul>
+      <div class="soma-final"><span>NO PERÍODO · ${inteiro(soma(doPer, "quantidade"))} h</span><span>${moeda(soma(doPer, "valor"))}</span></div>
+    </div>
+    <p class="muted small" style="text-align:center">As horas são lançadas pelo Bruno. Se faltar algum dia, fale com ele.</p>`
+    : `<div class="card vazio">Nenhuma hora lançada ainda. As horas são lançadas pelo Bruno.</div>`);
 }
 
 // ---------- Aba: meus lotes ----------
-function abaLotes(area, d) {
-  if (!d.abertos.length) { area.innerHTML = `<div class="card vazio">Nenhum lote com você no momento. 🙂</div>`; return; }
-  area.innerHTML = d.abertos.map((l) => {
+function abaLotes(d) {
+  if (!d.abertos.length) { main.innerHTML = titulo("Meus lotes") + `<div class="card vazio">Nenhum lote com você no momento. 🙂</div>`; return; }
+  main.innerHTML = titulo("Meus lotes", `<span class="selo parcial">${d.abertos.length} em aberto</span>`) + d.abertos.map((l) => {
     const pct = Math.round((l.qtd_entregue / l.quantidade) * 100);
     return `<div class="mo-lote ${l.aviso_em ? "avisado" : ""}">
       <div class="mo-lote-topo">
@@ -118,7 +118,7 @@ function abaLotes(area, d) {
     </div>`;
   }).join("");
 
-  $$("[data-terminei]", area).forEach((b) => (b.onclick = () => {
+  $$("[data-terminei]", main).forEach((b) => (b.onclick = () => {
     const l = d.abertos.find((x) => x.id == b.dataset.terminei);
     abrirModal({
       titulo: "Terminei este lote",
@@ -133,47 +133,47 @@ function abaLotes(area, d) {
       },
     });
   }));
-  $$("[data-cancelar]", area).forEach((b) => (b.onclick = async () => {
+  $$("[data-cancelar]", main).forEach((b) => (b.onclick = async () => {
     if (!(await confirmar("Cancelar o aviso de que terminou este lote?", "Cancelar aviso"))) return;
     try { await rpc("cancelar_aviso", { p_lote: Number(b.dataset.cancelar) }); aviso("Aviso cancelado."); render(); }
     catch (e) { aviso(e.message, true); }
   }));
 }
 
-// ---------- Aba: finalizados ----------
-function abaFinalizados(area, d, per, freq) {
-  const noPer = d.entregas.filter((e) => e.dia >= per.inicio && e.dia <= per.fim);
-  const anteriores = d.entregas.filter((e) => e.dia < per.inicio);
+// ---------- Aba: finalizados (peças e horas) ----------
+function abaFinalizados(d, per, freq) {
+  const noPer = d.ganhos.filter((e) => e.dia >= per.inicio && e.dia <= per.fim);
+  const anteriores = d.ganhos.filter((e) => e.dia < per.inicio);
   const lista = (l) => `<ul class="lista-final">${l.map((e) => `
-    <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)}<br>
-      <span class="small muted">${inteiro(e.quantidade)} peças · ${e.tipo === "pronto" ? "lote pronto" : "entrega parcial"}</span></span>
+    <li><span>${diaMes(e.dia)} – ${ehHora(e) ? "Horas trabalhadas" : `${esc(e.produto_nome)}: ${esc(e.servico_nome)}`}<br>
+      <span class="small muted">${ehHora(e) ? `${inteiro(e.quantidade)} h × ${moeda(e.valor_unitario)}` : `${inteiro(e.quantidade)} peças`}</span></span>
       <span class="right"><strong class="num">${moeda(e.valor)}</strong><br>${e.pago ? selo("pago", "Pago") : selo("aberto", "A receber")}</span></li>`).join("")}</ul>`;
-  area.innerHTML = `
+  main.innerHTML = titulo("Finalizados", `<span class="selo parcial">${FREQUENCIAS[freq]}</span>`) + `
     <div class="card">
-      <div class="section-head" style="margin-bottom:.2rem"><h2 style="margin:0">${esc(per.rotulo)}</h2><span class="selo parcial">${FREQUENCIAS[freq]}</span></div>
-      ${noPer.length ? lista(noPer) + `<div class="soma-final"><span>TOTAL DO PERÍODO</span><span>${moeda(soma(noPer, "valor"))}</span></div>`
+      <h3 style="margin:0 0 .3rem">${esc(per.rotulo)}</h3>
+      ${noPer.length ? lista(noPer) + `<div class="soma-final"><span>TOTAL · ${resumoQtd(noPer)}</span><span>${moeda(soma(noPer, "valor"))}</span></div>`
         : `<p class="muted">Nada finalizado neste período ainda.</p>`}
     </div>
-    ${anteriores.length ? `<div class="card" style="margin-top:.8rem"><h2>Antes disso</h2>${lista(anteriores.slice(0, 30))}</div>` : ""}`;
+    ${anteriores.length ? `<div class="card" style="margin-top:.8rem"><h3>Antes disso</h3>${lista(anteriores.slice(0, 30))}</div>` : ""}`;
 }
 
 // ---------- Aba: pagamentos ----------
-function abaPagamentos(area, d) {
-  area.innerHTML = `
+function abaPagamentos(d) {
+  main.innerHTML = titulo("Pagamentos") + `
     <div class="card">
-      <h2>📩 Notas de pagamento</h2>
+      <h3>📩 Notas de pagamento</h3>
       ${d.notas.length ? d.notas.map((n) => `<div class="nota-item ${n.lida_em ? "" : "nao-lida"}">
-        <span><strong>${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}</strong><br><span class="small muted">Enviada em ${dataBR(n.enviada_em)} · ${inteiro(n.quantidade)} peças</span></span>
+        <span><strong>${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}</strong><br><span class="small muted">Enviada em ${dataBR(n.enviada_em)}</span></span>
         <span style="display:flex;gap:.6rem;align-items:center"><strong class="num">${moeda(n.valor_total)}</strong><button class="btn ${n.lida_em ? "sec" : ""} peq" data-nota="${n.id}">Ver</button></span>
       </div>`).join("") : `<p class="muted">Nenhuma nota recebida ainda.</p>`}
     </div>
     <div class="card" style="margin-top:.8rem">
-      <h2>💰 Pagamentos recebidos</h2>
+      <h3>💰 Pagamentos recebidos</h3>
       ${d.pagamentos.length ? `<ul class="lista-final">${d.pagamentos.map((p) => `<li>
-        <span>${esc(rotuloPeriodo(p.tipo, p.inicio))}<br><span class="small muted">pago em ${dataBR(p.pago_em)} · ${inteiro(p.quantidade)} peças</span></span>
+        <span>${esc(rotuloPeriodo(p.tipo, p.inicio))}<br><span class="small muted">pago em ${dataBR(p.pago_em)}</span></span>
         <strong class="num">${moeda(p.valor_total)}</strong></li>`).join("")}</ul>` : `<p class="muted">Nenhum pagamento registrado ainda.</p>`}
     </div>`;
-  $$("[data-nota]", area).forEach((b) => (b.onclick = () => verNota(d.notas.find((n) => n.id == b.dataset.nota))));
+  $$("[data-nota]", main).forEach((b) => (b.onclick = () => verNota(d.notas.find((n) => n.id == b.dataset.nota))));
 }
 
 function verNota(n) {
@@ -183,9 +183,10 @@ function verNota(n) {
     conteudo: `
       <div class="nota-previa">
         <div class="nota-topo"><strong>${esc(NOME_FABRICA)}</strong><span>Enviada em ${dataBR(n.enviada_em)}</span></div>
-        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">R$/peça</th><th class="right">Valor</th></tr></thead>
-          <tbody>${itens.map((i) => `<tr><td>${esc(i.produto)} · ${esc(i.servico)}</td><td class="right num">${inteiro(i.quantidade)}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
-          <tfoot><tr><td>Total</td><td class="right num">${inteiro(n.quantidade)}</td><td></td><td class="right num">${moeda(n.valor_total)}</td></tr></tfoot></table>
+        <table><thead><tr><th>Produto · serviço</th><th class="right">Qtd</th><th class="right">Valor unit.</th><th class="right">Valor</th></tr></thead>
+          <tbody>${itens.map((i) => `<tr><td>${ehHora(i) ? "Horas trabalhadas" : `${esc(i.produto)} · ${esc(i.servico)}`}</td>
+            <td class="right num">${inteiro(i.quantidade)} ${ehHora(i) ? "h" : "pç"}</td><td class="right num">${moeda(i.valor_unitario)}</td><td class="right num">${moeda(i.valor)}</td></tr>`).join("")}</tbody>
+          <tfoot><tr><td>Total</td><td></td><td></td><td class="right num">${moeda(n.valor_total)}</td></tr></tfoot></table>
       </div>
       ${n.mensagem ? `<p style="margin:.8rem 0 0"><strong>Recado:</strong> ${esc(n.mensagem)}</p>` : ""}
       <button type="submit" class="btn bloco" style="margin-top:1rem">Fechar</button>`,
@@ -193,27 +194,32 @@ function verNota(n) {
   if (!n.lida_em) rpc("marcar_nota_lida", { p_nota: n.id }).then(() => { n.lida_em = new Date().toISOString(); render(); }).catch(() => {});
 }
 
-// ---------- Menu lateral: dia, semana, mês ----------
-function renderLateral(d, { hoje, semana, mes, per, freq }) {
-  const doDia = d.entregas.filter((e) => e.dia === hoje);
-  const daSemana = d.entregas.filter((e) => e.dia >= semana);
-  const doMes = d.entregas.filter((e) => e.dia >= mes);
-  const bloco = (titulo, l) => `<div class="bloco"><h3>${titulo}</h3><div class="par"><span>${inteiro(soma(l, "quantidade"))} peças</span><strong>${moeda(soma(l, "valor"))}</strong></div></div>`;
-  lateral.innerHTML = `
-    <div class="section-head" style="margin-bottom:.5rem"><h2 style="margin:0">Meu resumo</h2>
-      <button class="icon-btn" id="btnFecharLateral" aria-label="Fechar menu" style="color:var(--muted)">✕</button></div>
-    <div class="bloco acumulado"><h3>Próximo fechamento</h3><div class="grande">${dataBR(per.fim)}</div>
-      <div class="small" style="opacity:.85">Pagamento ${FREQUENCIAS[freq].toLowerCase()} · ${esc(per.rotulo)}</div></div>
-    ${bloco("Finalizado hoje", doDia)}
-    ${bloco("Finalizado na semana", daSemana)}
-    ${bloco("Finalizado no mês", doMes)}
-    <div id="areaInstalar" style="margin:.4rem 0"></div>
-    <div class="acoes" style="margin-top:.4rem">
-      <button class="btn sec peq" id="btnSenha">🔑 Trocar senha</button>
-      <button class="btn sec peq" id="btnSair">Sair</button>
+// ---------- Aba: perfil (resumo do dia, semana e mês) ----------
+function abaPerfil(d, per, freq) {
+  const hoje = isoLocal(), semana = inicioSemana(), mes = inicioMes();
+  const bloco = (t, l) => `<div class="mo2-resumo"><span>${t}</span><small>${resumoQtd(l)}</small><strong>${moeda(soma(l, "valor"))}</strong></div>`;
+  main.innerHTML = `
+    <div class="card mo2-perfil">
+      <div class="mo2-avatar">${esc(primeiroNome[0] || "?").toUpperCase()}</div>
+      <div><strong>${esc(perfil.nome)}</strong><span>Usuário: ${esc(perfil.usuario)}</span>
+        <span>${porHora ? "Recebe por hora" : "Recebe por produção"} · fechamento ${FREQUENCIAS[freq].toLowerCase()}</span></div>
+    </div>
+    ${titulo("Meu resumo")}
+    <div class="mo2-resumos">
+      ${bloco("Hoje", d.ganhos.filter((e) => e.dia === hoje))}
+      ${bloco("Semana", d.ganhos.filter((e) => e.dia >= semana))}
+      ${bloco("Mês", d.ganhos.filter((e) => e.dia >= mes))}
+    </div>
+    <div class="card" style="margin-top:.8rem">
+      <div class="par-linha"><span>Próximo fechamento</span><strong>${dataBR(per.fim)}</strong></div>
+      <div class="small muted">${esc(per.rotulo)}</div>
+    </div>
+    <div id="areaInstalar" style="margin:.8rem 0"></div>
+    <div class="menu-mais">
+      <button type="button" id="btnSenha"><i>🔑</i>Trocar minha senha</button>
+      <button type="button" id="btnSair" class="sair"><i>⏻</i>Sair</button>
     </div>`;
   botaoInstalar($("#areaInstalar"));
-  $("#btnFecharLateral").onclick = fecharLateral;
   $("#btnSenha").onclick = () => modalTrocarSenha(perfil.usuario);
   $("#btnSair").onclick = sair;
 }
