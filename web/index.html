@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#23324d">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/favicon-48.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="BCRA">
   <title>Entrar — Controle de Produção</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -28,10 +35,12 @@
         <p id="erro" class="small" style="color:var(--bad);min-height:1.2em;margin:.6rem 0 0"></p>
       </form>
       <p class="muted small" style="text-align:center;margin:.4rem 0 0">Esqueceu a senha? Peça ao dono para redefinir.</p>
+      <div id="areaInstalar" style="margin-top:1rem"></div>
     </div>
   </div>
   <script type="module">
-    import { entrar, carregarPerfil } from "./js/comum.js";
+    import { entrar, carregarPerfil, botaoInstalar } from "./js/comum.js";
+    botaoInstalar(document.getElementById("areaInstalar"));
     import { NOME_FABRICA } from "./config.js";
     document.getElementById("nomeFabrica").textContent = NOME_FABRICA;
 

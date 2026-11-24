@@ -2,7 +2,7 @@
 import {
   sb, exigirPapel, sair, modalTrocarSenha, q, rpc, abrirModal, confirmar, aviso,
   moeda, inteiro, dataBR, isoLocal, inicioSemana, inicioMes, nomeMes,
-  selo, esc, $, $$, periodo, rotuloPeriodo, FREQUENCIAS,
+  selo, esc, $, $$, periodo, rotuloPeriodo, FREQUENCIAS, botaoInstalar,
 } from "./comum.js";
 import { NOME_FABRICA } from "../config.js";
 
@@ -207,10 +207,12 @@ function renderLateral(d, { hoje, semana, mes, per, freq }) {
     ${bloco("Finalizado hoje", doDia)}
     ${bloco("Finalizado na semana", daSemana)}
     ${bloco("Finalizado no mês", doMes)}
+    <div id="areaInstalar" style="margin:.4rem 0"></div>
     <div class="acoes" style="margin-top:.4rem">
       <button class="btn sec peq" id="btnSenha">🔑 Trocar senha</button>
       <button class="btn sec peq" id="btnSair">Sair</button>
     </div>`;
+  botaoInstalar($("#areaInstalar"));
   $("#btnFecharLateral").onclick = fecharLateral;
   $("#btnSenha").onclick = () => modalTrocarSenha(perfil.usuario);
   $("#btnSair").onclick = sair;

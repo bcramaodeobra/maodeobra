@@ -203,3 +203,47 @@ export function periodo(tipo, refIso = isoLocal()) {
 export const periodoAnterior = (p) => periodo(p.tipo, somaDias(p.inicio, -1));
 export const periodoSeguinte = (p) => periodo(p.tipo, somaDias(p.fim, 1));
 export const rotuloPeriodo = (tipo, inicio) => periodo(tipo || "mensal", inicio).rotulo;
+
+// ---------- App (PWA): registro e botão "Instalar app" ----------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+let pedidoInstalacao = null;
+const ouvintesInstalar = new Set();
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); pedidoInstalacao = e; ouvintesInstalar.forEach((f) => f()); });
+window.addEventListener("appinstalled", () => { pedidoInstalacao = null; ouvintesInstalar.forEach((f) => f()); });
+
+export const appInstalado = () =>
+  matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+const ehIphone = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+// Mostra o botão "📲 Instalar app" dentro do elemento (some quando já está instalado)
+export function botaoInstalar(alvo) {
+  if (!alvo) return;
+  const desenhar = () => {
+    if (appInstalado()) { alvo.innerHTML = ""; return; }
+    if (pedidoInstalacao) {
+      alvo.innerHTML = `<button type="button" class="btn sec bloco">📲 Instalar o app no celular</button>`;
+      alvo.querySelector("button").onclick = async () => {
+        pedidoInstalacao.prompt();
+        await pedidoInstalacao.userChoice.catch(() => {});
+        pedidoInstalacao = null; desenhar();
+      };
+    } else if (ehIphone()) {
+      alvo.innerHTML = `<button type="button" class="btn sec bloco">📲 Como instalar o app no iPhone</button>`;
+      alvo.querySelector("button").onclick = () => abrirModal({
+        titulo: "Instalar no iPhone",
+        conteudo: `<ol style="padding-left:1.2rem;line-height:1.7">
+          <li>Abra este site no <strong>Safari</strong>.</li>
+          <li>Toque no botão <strong>Compartilhar</strong> (quadrado com uma seta para cima, na barra de baixo).</li>
+          <li>Role e toque em <strong>Adicionar à Tela de Início</strong>.</li>
+          <li>Toque em <strong>Adicionar</strong>. O ícone do app aparece na tela do celular.</li></ol>
+          <button type="submit" class="btn bloco">Entendi</button>`,
+      });
+    } else {
+      alvo.innerHTML = "";
+    }
+  };
+  ouvintesInstalar.add(desenhar);
+  desenhar();
+}
