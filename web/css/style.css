@@ -368,3 +368,64 @@ body.mo main { max-width: 640px; padding: 1rem .9rem 2rem; }
 .btn-nome .bandeira { display: inline-block; margin-top: .25rem; background: var(--amarelo); color: #1f2430; border-radius: 99px; font-size: .68rem; font-weight: 800; padding: .08rem .45rem; text-transform: none; letter-spacing: 0; }
 .lista-avisos { margin-bottom: 1rem; }
 .lista-avisos .card { border-color: #f2d978; background: #fffcf0; }
+
+/* =====================================================================
+   PAINEL DO DONO — versão celular
+   ===================================================================== */
+.marca-celular, .nav-baixo, .fab { display: none; }
+.menu-mais { display: flex; flex-direction: column; gap: .5rem; }
+.menu-mais button { display: flex; align-items: center; gap: .8rem; width: 100%; padding: .95rem 1rem; border: 1px solid var(--line); border-radius: 12px;
+  background: #fff; font: inherit; font-weight: 700; font-size: 1rem; text-align: left; cursor: pointer; color: var(--text); }
+.menu-mais button i { font-style: normal; font-size: 1.3rem; width: 1.6rem; text-align: center; }
+.menu-mais button.sair { color: var(--bad); }
+
+@media (max-width: 760px) {
+  body.dono { padding-bottom: 84px; }
+  body.dono main { padding: .8rem .8rem 1.5rem; }
+  .nav-dono { padding: .55rem .9rem; min-height: 54px; }
+  .nav-dono .abas { display: none; }
+  .marca-celular { display: block; flex: 1; font-weight: 800; color: var(--amarelo); letter-spacing: .3px; }
+  .nav-dono .usuario #quem { font-weight: 600; }
+  .titulo-pagina { font-size: 1.1rem; margin: .6rem 0 .2rem; }
+
+  /* Barra de baixo */
+  .nav-baixo { display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: var(--primary); padding: .3rem .3rem calc(.35rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 14px rgba(20,24,35,.18); }
+  .nav-baixo button { background: none; border: 0; color: #c9d1de; font: inherit; font-size: .72rem; font-weight: 700; padding: .35rem 0; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: .1rem; cursor: pointer; }
+  .nav-baixo button i { font-style: normal; font-size: 1.35rem; line-height: 1.2; }
+  .nav-baixo button.ativo { color: var(--amarelo); background: rgba(255,255,255,.07); }
+
+  /* Botão flutuante */
+  .fab { display: block; position: fixed; right: 1rem; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 31; border: 0; border-radius: 99px;
+    padding: .85rem 1.2rem; background: var(--accent); color: #fff; font: inherit; font-weight: 800; font-size: 1rem; box-shadow: 0 6px 16px rgba(200,85,61,.45); cursor: pointer; }
+  .fab.hidden { display: none; }
+  #btnNovoLote { display: none; }
+
+  /* Início */
+  .grade-nomes { grid-template-columns: 1fr 1fr; gap: .7rem; }
+  .btn-nome { min-height: 74px; font-size: .95rem; }
+  .grade-fech { grid-template-columns: 1fr 1fr; gap: 1rem .7rem; }
+  .cartao-fech .valor { font-size: 1.15rem; }
+  .totais { grid-template-columns: 1fr 1fr; }
+  .total .v { font-size: 1.1rem; }
+
+  /* Janelas: a ficha e as janelas largas ocupam a tela toda */
+  .modal.largo { max-width: none; height: 100%; max-height: 100%; border-radius: 0; padding-bottom: calc(1.4rem + env(safe-area-inset-bottom)); }
+  .modal-fundo:has(.modal.largo) { align-items: stretch; }
+  .mini-lote .acoes .btn { flex: 1; padding: .7rem .6rem; font-size: .9rem; }
+  .btn.pronto { min-height: 44px; }
+
+  /* Tabelas viram listas */
+  body.dono .tabela-wrap { overflow: visible; }
+  body.dono table, body.dono thead, body.dono tbody, body.dono tfoot, body.dono tr, body.dono td { display: block; width: 100%; }
+  body.dono thead { display: none; }
+  body.dono tr { border: 1px solid var(--line); border-radius: 10px; padding: .35rem .7rem; margin-bottom: .5rem; background: #fff; }
+  body.dono tr.subtotal, body.dono tfoot tr { background: #f6f8fb; }
+  body.dono td { display: flex; justify-content: space-between; gap: .8rem; border: 0; padding: .3rem 0; text-align: right; }
+  body.dono td.right { text-align: right; }
+  body.dono td::before { content: attr(data-label); font-size: .72rem; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); font-weight: 700; text-align: left; flex-shrink: 0; }
+  body.dono td:not([data-label])::before { content: none; }
+  body.dono td:empty { display: none; }
+  body.dono td input { max-width: 120px; }
+}

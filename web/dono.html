@@ -16,6 +16,7 @@
 </head>
 <body class="dono">
   <header class="nav-dono">
+    <div class="marca-celular">🧵 Painel do Dono</div>
     <nav class="abas" id="abas">
       <button data-aba="inicio" class="ativo">Início</button>
       <button data-aba="minha">Minha mão de obra</button>
@@ -32,6 +33,15 @@
   </header>
 
   <main id="conteudo"><div class="vazio">Carregando…</div></main>
+
+  <!-- Só aparece no celular -->
+  <button class="fab" id="fabLote" type="button">＋ Enviar lote</button>
+  <nav class="nav-baixo" id="navBaixo">
+    <button data-aba="inicio" class="ativo"><i>🏠</i><span>Início</span></button>
+    <button data-aba="minha"><i>📦</i><span>Minha MO</span></button>
+    <button data-aba="fechamentos"><i>💰</i><span>Fechamentos</span></button>
+    <button data-mais><i>☰</i><span>Mais</span></button>
+  </nav>
 
   <script type="module" src="js/dono.js"></script>
 </body>

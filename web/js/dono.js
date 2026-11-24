@@ -1,5 +1,5 @@
 import {
-  sb, exigirPapel, sair, modalTrocarSenha, adminUsuarios, rpc, q,
+  sb, exigirPapel, sair, modalTrocarSenha, trocarSenha, adminUsuarios, rpc, q,
   moeda, inteiro, dataBR, dataHoraBR, inicioMes, nomeMes,
   selo, esc, $, $$, aviso, abrirModal, confirmar,
   isoLocal, periodo, periodoAnterior, periodoSeguinte, rotuloPeriodo, FREQUENCIAS,
@@ -30,12 +30,7 @@ function modalMinhaConta() {
       conteudo: `<div class="linha"><div><label>Novo usuário</label><input name="usuario" value="${esc(perfil.usuario)}" required autocapitalize="none"></div></div>
         <p class="muted small">Só letras minúsculas, números, ponto, - ou _ (sem espaço e sem acento). A senha continua a mesma.</p>
         <button type="submit" class="btn bloco">Salvar novo usuário</button>`,
-      onSubmit: async (fd) => {
-        const novo = String(fd.get("usuario") || "").trim().toLowerCase();
-        const r = await adminUsuarios({ acao: "alterar_usuario", id: perfil.id, usuario: novo });
-        perfil.usuario = r?.usuario || novo;
-        aviso(`Pronto! Da próxima vez, entre com o usuário: ${perfil.usuario}`);
-      },
+      onSubmit: async (fd) => { await alterarMeuUsuario(fd.get("usuario")); },
     });
   };
 }
@@ -51,13 +46,63 @@ const linkWhats = (n) => (n ? `https://wa.me/55${String(n).replace(/\D/g, "").re
 // ---------------------------------------------------------------
 // Navegação
 // ---------------------------------------------------------------
+// No celular as tabelas viram listas: cada célula recebe o nome da sua coluna
+function rotularTabelas(raiz = document) {
+  $$("table", raiz).forEach((t) => {
+    const cab = $$("thead th", t).map((th) => th.textContent.trim());
+    if (!cab.length) return;
+    $$("tbody tr, tfoot tr", t).forEach((tr) => {
+      let col = 0;
+      [...tr.children].forEach((td) => {
+        if (!td.dataset.label && cab[col]) td.dataset.label = cab[col];
+        col += Number(td.getAttribute("colspan") || 1);
+      });
+    });
+  });
+}
+new MutationObserver(() => rotularTabelas()).observe(document.body, { childList: true, subtree: true });
+
+// Marca a aba ativa nas duas navegações (topo no computador, barra de baixo no celular)
+function marcarAba(aba) {
+  abaAtual = aba;
+  $$("#abas button").forEach((x) => x.classList.toggle("ativo", x.dataset.aba === aba));
+  const naBarra = ["inicio", "minha", "fechamentos"].includes(aba);
+  $$("#navBaixo button").forEach((x) => x.classList.toggle("ativo", naBarra ? x.dataset.aba === aba : x.hasAttribute("data-mais")));
+  $("#fabLote").classList.toggle("hidden", !["inicio", "fechamentos"].includes(aba));
+  window.scrollTo(0, 0);
+}
+function irPara(aba) { marcarAba(aba); render(); }
+
 $("#abas").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-aba]");
-  if (!b) return;
-  $$("#abas button").forEach((x) => x.classList.toggle("ativo", x === b));
-  abaAtual = b.dataset.aba;
-  render();
+  if (b) irPara(b.dataset.aba);
 });
+$("#navBaixo").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.hasAttribute("data-mais")) return menuMais();
+  irPara(b.dataset.aba);
+});
+$("#fabLote").onclick = () => modalNovoLote();
+
+function menuMais() {
+  const itens = [
+    ["maos", "👥", "Cadastros mão de obra"],
+    ["servicos", "🧵", "Cadastros serviços"],
+    ["admin", "⚙️", "Administrativo"],
+  ];
+  const m = abrirModal({
+    titulo: "Mais opções",
+    conteudo: `<div class="menu-mais">
+      ${itens.map(([k, ic, t]) => `<button type="button" data-ir="${k}"><i>${ic}</i>${t}</button>`).join("")}
+      <button type="button" id="maisConta"><i>🔑</i>Minha conta (usuário e senha)</button>
+      <button type="button" id="maisSair" class="sair"><i>⏻</i>Sair</button>
+    </div>`,
+  });
+  $$("[data-ir]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); irPara(b.dataset.ir); }));
+  $("#maisConta", m.form).onclick = () => { m.fechar(); modalMinhaConta(); };
+  $("#maisSair", m.form).onclick = sair;
+}
 
 async function render() {
   try {
@@ -877,8 +922,7 @@ function detalheFechamento(mo, x, pags, p) {
   }));
   $("#fRecibo", f)?.addEventListener("click", () => imprimirRecibo(r, linhas, mo, p.rotulo));
   $("#fNota", f)?.addEventListener("click", () => {
-    m.fechar(); abaAtual = "admin";
-    $$("#abas button").forEach((b) => b.classList.toggle("ativo", b.dataset.aba === "admin"));
+    m.fechar(); marcarAba("admin");
     renderAdmin({ moId: mo.id, tipo: p.tipo, ref: p.inicio });
   });
 }
@@ -975,11 +1019,51 @@ async function renderAdmin(pre = {}) {
             : `<p class="muted small">Nenhuma nota enviada ainda.</p>`}
         </div>
       </div>
+    </div>
+
+    <div class="card section" id="cardAcessos" style="margin-top:1rem">
+      <h2>🔑 Acessos</h2>
+      <div class="grid-admin">
+        <div>
+          <h3>Minha conta</h3>
+          <p class="muted small" style="margin-top:0">Você entra com o usuário <strong id="meuUsuario">${esc(perfil.usuario)}</strong>.</p>
+          <form id="formMeuUsuario" novalidate>
+            <div class="linha" style="grid-template-columns:1fr auto;align-items:end">
+              <div><label>Novo usuário</label><input name="usuario" value="${esc(perfil.usuario)}" autocapitalize="none"></div>
+              <button class="btn" type="submit">Salvar usuário</button>
+            </div>
+          </form>
+          <form id="formMinhaSenha" novalidate>
+            <div class="linha">
+              <div><label>Senha atual</label><input type="password" name="atual" autocomplete="current-password"></div>
+            </div>
+            <div class="linha">
+              <div><label>Nova senha (mín. 6)</label><input type="password" name="nova" autocomplete="new-password"></div>
+              <div><label>Repita a nova senha</label><input type="password" name="nova2" autocomplete="new-password"></div>
+            </div>
+            <button class="btn" type="submit">Trocar minha senha</button>
+          </form>
+        </div>
+        <div>
+          <h3>Acesso das mãos de obra</h3>
+          <form id="formAcessoMo" novalidate>
+            <div class="linha"><div><label>Mão de obra</label><select name="mo"><option value="">Selecione…</option>
+              ${maos.map((m) => `<option value="${m.id}">${esc(m.nome)}${m.ativo ? "" : " (inativa)"}</option>`).join("")}</select></div></div>
+            <div class="linha">
+              <div><label>Usuário</label><input name="usuario" autocapitalize="none" disabled></div>
+              <div><label>Nova senha (em branco = manter)</label><input name="senha" placeholder="mín. 6 caracteres" disabled></div>
+            </div>
+            <button class="btn" type="submit" disabled>Salvar acesso</button>
+            <p class="muted small" style="margin-bottom:0">Depois de salvar, passe o novo usuário e/ou a nova senha para ela.</p>
+          </form>
+        </div>
+      </div>
     </div>`;
 
   ligarCalculadora();
   ligarPagamentos(maos, pre);
   ligarRelatorio();
+  ligarAcessos(maos);
 
   $("#btnAbrirPlanilha").onclick = () => window.open(conf.link_planilha, "_blank", "noopener");
   $("#btnBackupAgora").onclick = () => {
@@ -999,6 +1083,49 @@ async function renderAdmin(pre = {}) {
     catch (err) { aviso(err.message, true); }
   });
   if (pre.moId) $("#cardPagamentos").scrollIntoView({ behavior: "smooth" });
+}
+
+// Acessos: minha conta + login das mãos de obra
+async function alterarMeuUsuario(novo) {
+  novo = String(novo || "").trim().toLowerCase();
+  if (!novo) throw new Error("Informe o novo usuário.");
+  if (novo === perfil.usuario) throw new Error("Esse já é o seu usuário.");
+  const r = await adminUsuarios({ acao: "alterar_usuario", id: perfil.id, usuario: novo });
+  perfil.usuario = r?.usuario || novo;
+  aviso(`Pronto! Da próxima vez, entre com o usuário: ${perfil.usuario}`);
+}
+
+function ligarAcessos(maos) {
+  const enviar = (form, fn) => form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const b = form.querySelector("button[type=submit]"); b.disabled = true;
+    try { await fn(new FormData(form)); } catch (err) { aviso(err.message, true); } finally { b.disabled = false; }
+  });
+  enviar($("#formMeuUsuario"), async (fd) => { await alterarMeuUsuario(fd.get("usuario")); $("#meuUsuario").textContent = perfil.usuario; });
+  enviar($("#formMinhaSenha"), async (fd) => {
+    if (!fd.get("atual") || !fd.get("nova")) throw new Error("Preencha a senha atual e a nova.");
+    if (fd.get("nova") !== fd.get("nova2")) throw new Error("As novas senhas não conferem.");
+    await trocarSenha(perfil.usuario, fd.get("atual"), fd.get("nova"));
+    $("#formMinhaSenha").reset(); aviso("Senha alterada!");
+  });
+  const f = $("#formAcessoMo");
+  f.mo.onchange = () => {
+    const m = maos.find((x) => x.id === f.mo.value);
+    f.usuario.value = m ? m.usuario : ""; f.senha.value = "";
+    [f.usuario, f.senha, f.querySelector("button")].forEach((el) => (el.disabled = !m));
+  };
+  enviar(f, async (fd) => {
+    const m = maos.find((x) => x.id === fd.get("mo"));
+    if (!m) throw new Error("Escolha a mão de obra.");
+    const novo = String(fd.get("usuario") || "").trim().toLowerCase(), senha = String(fd.get("senha") || "");
+    if (!novo) throw new Error("Informe o usuário.");
+    if (senha && senha.length < 6) throw new Error("A senha precisa ter pelo menos 6 caracteres.");
+    const mudou = [];
+    if (novo !== m.usuario) { await adminUsuarios({ acao: "alterar_usuario", id: m.id, usuario: novo }); m.usuario = novo; mudou.push(`usuário: ${novo}`); }
+    if (senha) { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha }); mudou.push("senha nova"); }
+    f.senha.value = "";
+    aviso(mudou.length ? `Salvo! ${m.nome} — ${mudou.join(" e ")}` : "Nada foi alterado.");
+  });
 }
 
 // Monta a prévia da nota e envia
