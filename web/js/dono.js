@@ -10,7 +10,35 @@ const perfil = await exigirPapel("dono");
 document.title = `${NOME_FABRICA} — Painel do Dono`;
 $("#quem").textContent = perfil.nome;
 $("#btnSair").onclick = sair;
-$("#btnSenha").onclick = () => modalTrocarSenha(perfil.usuario);
+$("#btnSenha").onclick = modalMinhaConta;
+$("#btnSenha").title = "Minha conta (usuário e senha)";
+
+function modalMinhaConta() {
+  const m = abrirModal({
+    titulo: "Minha conta",
+    conteudo: `<p class="muted small" style="margin-top:0">Você entra com o usuário <strong>${esc(perfil.usuario)}</strong>.</p>
+      <div class="acoes" style="flex-direction:column;align-items:stretch">
+        <button type="button" class="btn" id="contaUsuario">✏️ Alterar meu usuário</button>
+        <button type="button" class="btn sec" id="contaSenha">🔑 Trocar minha senha</button>
+      </div>`,
+  });
+  $("#contaSenha", m.form).onclick = () => { m.fechar(); modalTrocarSenha(perfil.usuario); };
+  $("#contaUsuario", m.form).onclick = () => {
+    m.fechar();
+    abrirModal({
+      titulo: "Alterar meu usuário",
+      conteudo: `<div class="linha"><div><label>Novo usuário</label><input name="usuario" value="${esc(perfil.usuario)}" required autocapitalize="none"></div></div>
+        <p class="muted small">Só letras minúsculas, números, ponto, - ou _ (sem espaço e sem acento). A senha continua a mesma.</p>
+        <button type="submit" class="btn bloco">Salvar novo usuário</button>`,
+      onSubmit: async (fd) => {
+        const novo = String(fd.get("usuario") || "").trim().toLowerCase();
+        const r = await adminUsuarios({ acao: "alterar_usuario", id: perfil.id, usuario: novo });
+        perfil.usuario = r?.usuario || novo;
+        aviso(`Pronto! Da próxima vez, entre com o usuário: ${perfil.usuario}`);
+      },
+    });
+  };
+}
 
 const main = $("#conteudo");
 let abaAtual = "inicio";
@@ -63,23 +91,31 @@ async function carregarCatalogo() {
 async function renderInicio() {
   const [maos, abertos] = await Promise.all([
     carregarMaos(),
-    q(sb.from("v_lotes").select("mao_de_obra_id, valor_aberto, qtd_falta").eq("status", "aberto")),
+    q(sb.from("v_lotes").select("id, mao_de_obra_id, mao_de_obra_nome, produto_nome, servico_nome, quantidade, valor_aberto, qtd_falta, aviso_em, aviso_mensagem").eq("status", "aberto")),
   ]);
   const porMao = {};
   abertos.forEach((l) => {
-    porMao[l.mao_de_obra_id] ??= { lotes: 0, valor: 0 };
+    porMao[l.mao_de_obra_id] ??= { lotes: 0, valor: 0, avisos: 0 };
     porMao[l.mao_de_obra_id].lotes += 1;
     porMao[l.mao_de_obra_id].valor += Number(l.valor_aberto);
+    if (l.aviso_em) porMao[l.mao_de_obra_id].avisos += 1;
   });
+  const avisos = abertos.filter((l) => l.aviso_em).sort((a, b) => (a.aviso_em < b.aviso_em ? 1 : -1));
 
   main.innerHTML = `
     <div class="titulo-pagina">Mãos de obra</div>
     <div class="section-head"><div class="data-hoje">${dataBR(new Date())}</div>
       ${maos.length ? `<button class="btn acento" id="btnNovoLote">＋ Enviar lote</button>` : ""}</div>
+    ${avisos.length ? `<div class="lista-avisos"><div class="card">
+      <h3 style="margin:0 0 .4rem">✋ Avisaram que terminaram</h3>
+      <ul class="lista-final">${avisos.map((l) => `<li><span><strong>${esc(l.mao_de_obra_nome)}</strong> – ${esc(l.produto_nome)}: ${esc(l.servico_nome)} – ${inteiro(l.qtd_falta)} pç
+        <br><span class="small muted">${dataHoraBR(l.aviso_em)}${l.aviso_mensagem ? ` · “${esc(l.aviso_mensagem)}”` : ""}</span></span>
+        <button class="btn peq" data-ficha="${l.mao_de_obra_id}">Abrir</button></li>`).join("")}</ul></div></div>` : ""}
     ${maos.length ? `<div class="grade-nomes">${maos.map((m) => {
       const a = porMao[m.id];
       return `<button class="btn-nome ${a ? "" : "inativo"}" data-ficha="${m.id}">${esc(maiusc(m.nome))}
-        <small>${a ? `${a.lotes} lote${a.lotes > 1 ? "s" : ""} · ${moeda(a.valor)}` : "sem lote em aberto"}</small></button>`;
+        <small>${a ? `${a.lotes} lote${a.lotes > 1 ? "s" : ""} · ${moeda(a.valor)}` : "sem lote em aberto"}</small>
+        ${a?.avisos ? `<span class="bandeira">✋ terminou ${a.avisos > 1 ? a.avisos + " lotes" : "1 lote"}</span>` : ""}</button>`;
     }).join("")}</div>`
       : `<div class="card vazio">Nenhuma mão de obra cadastrada ainda.<br>Comece pela aba <strong>Cadastros serviços</strong> e depois <strong>Cadastros mão de obra</strong>.</div>`}`;
 
@@ -139,6 +175,8 @@ async function abrirFicha(moId) {
             <span class="valor">${moeda(l.valor_total)}</span></div>
           <div class="linha2">${moeda(l.valor_unitario)} por peça · Entregue: ${inteiro(l.qtd_entregue)} · Falta: <strong>${inteiro(l.qtd_falta)}</strong> (${moeda(l.valor_aberto)})
             ${l.observacoes ? `<br>Obs.: ${esc(l.observacoes)}` : ""}</div>
+          ${l.aviso_em ? `<div class="aviso-terminou"><span>✋ Avisou que terminou em ${dataHoraBR(l.aviso_em)}${l.aviso_mensagem ? ` — “${esc(l.aviso_mensagem)}”` : ""}</span>
+            <button type="button" class="btn sec peq" data-dispensar="${l.id}">Dispensar aviso</button></div>` : ""}
           <div class="acoes">
             <button type="button" class="btn sec peq" data-parcial="${l.id}">Entrega parcial</button>
             <button type="button" class="btn pronto peq" data-pronto="${l.id}">✓ Lote pronto</button>
@@ -187,6 +225,11 @@ async function abrirFicha(moId) {
         abrirFicha(moId); if (abaAtual === "inicio") renderInicio();
       },
     });
+  }));
+
+  $$("[data-dispensar]", f).forEach((b) => (b.onclick = async () => {
+    try { await rpc("dispensar_aviso", { p_lote: Number(b.dataset.dispensar) }); aviso("Aviso dispensado."); } catch (e) { aviso(e.message, true); }
+    recarregar();
   }));
 
   $$("[data-cancelar]", f).forEach((b) => (b.onclick = async () => {
@@ -549,7 +592,7 @@ async function renderMaos() {
         <td>${m.ativo ? selo("pronto", "Ativo") : selo("cancelado", "Inativo")}</td>
         <td class="right" style="white-space:nowrap">
           <button class="btn sec peq" data-ed="${m.id}">Editar</button>
-          <button class="btn sec peq" data-senha="${m.id}">Senha</button>
+          <button class="btn sec peq" data-senha="${m.id}">Login</button>
           <button class="btn ${m.ativo ? "perigo" : "ok"} peq" data-at="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
         </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhuma mão de obra cadastrada.</div>`}`;
 
@@ -603,11 +646,24 @@ async function renderMaos() {
   $$("[data-senha]", main).forEach((b) => (b.onclick = () => {
     const m = maos.find((x) => x.id === b.dataset.senha);
     abrirModal({
-      titulo: `Nova senha para ${m.nome}`,
-      conteudo: `<div class="linha"><div><label>Nova senha (mín. 6)</label><input name="senha" required minlength="6"></div></div>
-        <p class="muted small">Passe a nova senha para ${esc(m.nome)}. Ela poderá trocar depois no painel dela.</p>
-        <button type="submit" class="btn bloco">Redefinir senha</button>`,
-      onSubmit: async (fd) => { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha: fd.get("senha") }); aviso("Senha redefinida!"); },
+      titulo: `Login de ${m.nome}`,
+      conteudo: `<div class="linha">
+          <div><label>Usuário</label><input name="usuario" value="${esc(m.usuario)}" required autocapitalize="none"></div>
+          <div><label>Nova senha (deixe em branco para manter)</label><input name="senha" minlength="6" placeholder="mín. 6 caracteres"></div>
+        </div>
+        <p class="muted small">Depois de salvar, passe o novo usuário e/ou a nova senha para ${esc(m.nome)}. Ela pode trocar a senha depois no painel dela.</p>
+        <button type="submit" class="btn bloco">Salvar</button>`,
+      onSubmit: async (fd) => {
+        const novo = String(fd.get("usuario") || "").trim().toLowerCase();
+        const senha = String(fd.get("senha") || "");
+        if (!novo) throw new Error("Informe o usuário.");
+        if (senha && senha.length < 6) throw new Error("A senha precisa ter pelo menos 6 caracteres.");
+        const mudou = [];
+        if (novo !== m.usuario) { await adminUsuarios({ acao: "alterar_usuario", id: m.id, usuario: novo }); mudou.push(`usuário: ${novo}`); }
+        if (senha) { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha }); mudou.push("senha nova"); }
+        aviso(mudou.length ? `Salvo! ${m.nome} — ${mudou.join(" e ")}` : "Nada foi alterado.");
+        renderMaos();
+      },
     });
   }));
 

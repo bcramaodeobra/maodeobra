@@ -87,6 +87,26 @@ Deno.serve(async (req) => {
       }
 
       // ---------------------------------------------------------------
+      case "alterar_usuario": {
+        const novo = String(body.usuario ?? "").trim().toLowerCase();
+        if (!usuarioValido(novo)) return resposta({ erro: "Usuário: 3 a 30 caracteres, só letras minúsculas, números, ponto, - ou _." }, 400);
+        const { data: alvo } = await admin.from("perfis").select("id, usuario").eq("id", body.id).maybeSingle();
+        if (!alvo) return resposta({ erro: "Cadastro não encontrado." }, 404);
+        if (alvo.usuario === novo) return resposta({ ok: true });
+        const { data: existe } = await admin.from("perfis").select("id").eq("usuario", novo).maybeSingle();
+        if (existe) return resposta({ erro: "Este nome de usuário já está em uso." }, 409);
+
+        const { error } = await admin.auth.admin.updateUserById(alvo.id, { email: `${novo}@${DOMINIO}`, email_confirm: true });
+        if (error) throw error;
+        const { error: errPerfil } = await admin.from("perfis").update({ usuario: novo }).eq("id", alvo.id);
+        if (errPerfil) {
+          await admin.auth.admin.updateUserById(alvo.id, { email: `${alvo.usuario}@${DOMINIO}`, email_confirm: true });
+          throw errPerfil;
+        }
+        return resposta({ ok: true, usuario: novo });
+      }
+
+      // ---------------------------------------------------------------
       case "ativar":
       case "desativar": {
         if (body.id === quem.user.id) return resposta({ erro: "Você não pode desativar a si mesmo." }, 400);

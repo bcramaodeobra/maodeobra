@@ -324,3 +324,47 @@ body.dono main { max-width: 1150px; }
 .cartao-fech .extra { font-size: .74rem; color: var(--muted); text-align: center; min-height: 1.1em; }
 tr.subtotal td { font-weight: 600; background: #f6f8fb; font-size: .88rem; }
 @media print { #cardPagamentos, .grid-admin { display: none; } }
+
+/* =====================================================================
+   PAINEL DA MÃO DE OBRA — celular
+   ===================================================================== */
+body.mo { background: #f3f4f7; }
+body.mo main { max-width: 640px; padding: 1rem .9rem 2rem; }
+.mo-ola { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .7rem; }
+.mo-ola h1 { margin: 0; font-size: 1.35rem; }
+.mo-hero { background: var(--primary); color: #fff; border-radius: 16px; padding: 1rem 1.1rem 1.05rem; box-shadow: 0 6px 18px rgba(35,50,77,.25); }
+.mo-hero .r { font-size: .78rem; font-weight: 700; letter-spacing: .6px; opacity: .8; }
+.mo-hero .v { font-size: 2.3rem; font-weight: 800; color: #22e33f; font-variant-numeric: tabular-nums; line-height: 1.15; margin: .1rem 0 .7rem; }
+.mo-hero-linha { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; border-top: 1px solid rgba(255,255,255,.15); padding-top: .65rem; }
+.mo-hero-linha span { display: block; font-size: .7rem; opacity: .75; line-height: 1.2; }
+.mo-hero-linha strong { font-size: .98rem; font-variant-numeric: tabular-nums; }
+.mo-alerta { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: .8rem; padding: .8rem 1rem; border-radius: 12px;
+  border: 1px solid #f2d978; background: #fff8db; font: inherit; font-weight: 600; color: #6b5200; cursor: pointer; text-align: left; }
+.mo-alerta span { font-weight: 800; }
+.mo-abas { display: grid; grid-template-columns: repeat(3, 1fr); gap: .3rem; background: #e4e7ee; padding: .3rem; border-radius: 12px; margin: 1rem 0 .8rem; }
+.mo-abas button { border: 0; background: none; padding: .6rem .3rem; border-radius: 9px; font: inherit; font-weight: 700; font-size: .9rem; color: var(--muted); cursor: pointer; }
+.mo-abas button.ativo { background: #fff; color: var(--primary); box-shadow: 0 1px 4px rgba(20,24,35,.12); }
+.mo-abas b { display: inline-block; min-width: 1.4em; padding: 0 .35em; border-radius: 99px; background: var(--primary); color: #fff; font-size: .75rem; }
+.mo-abas b.novo { background: var(--accent); }
+.mo-lote { background: #fff; border-radius: 14px; padding: .95rem 1rem; margin-bottom: .75rem; box-shadow: 0 1px 4px rgba(20,24,35,.08); border-left: 6px solid var(--primary); }
+.mo-lote.avisado { border-left-color: var(--amarelo); }
+.mo-lote-topo { display: flex; justify-content: space-between; gap: .6rem; align-items: flex-start; }
+.mo-lote .prod { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.mo-lote .serv { font-size: 1.3rem; font-weight: 800; text-transform: uppercase; line-height: 1.15; }
+.mo-lote .valor { font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mo-lote-info { font-size: .88rem; color: var(--muted); margin-top: .3rem; }
+.mo-lote-info strong { color: var(--text); }
+.mo-barra { height: 10px; background: #e7eaf0; border-radius: 99px; overflow: hidden; margin: .6rem 0 .1rem; }
+.mo-barra div { height: 100%; background: var(--ok); border-radius: 99px; }
+.mo-obs { margin-top: .5rem; font-size: .88rem; background: #f6f7fa; border-radius: 8px; padding: .45rem .6rem; }
+.mo-btn-terminei { width: 100%; margin-top: .8rem; padding: .8rem; font-size: 1rem; background: var(--ok); }
+.mo-btn-terminei:hover { background: #276b44; }
+.mo-avisado { margin-top: .8rem; padding: .65rem .75rem; border-radius: 10px; background: #fff8db; color: #6b5200; font-size: .9rem; font-weight: 600; }
+.mo-avisado .link { display: block; margin-top: .3rem; background: none; border: 0; padding: 0; color: var(--bad); font: inherit; font-size: .82rem; text-decoration: underline; cursor: pointer; }
+@media (max-width: 380px) { .mo-hero .v { font-size: 2rem; } .mo-lote .serv { font-size: 1.15rem; } }
+
+/* Aviso "terminou" no painel do dono */
+.aviso-terminou { margin-top: .45rem; padding: .45rem .6rem; border-radius: 8px; background: #fff8db; color: #6b5200; font-size: .86rem; font-weight: 600; display: flex; justify-content: space-between; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.btn-nome .bandeira { display: inline-block; margin-top: .25rem; background: var(--amarelo); color: #1f2430; border-radius: 99px; font-size: .68rem; font-weight: 800; padding: .08rem .45rem; text-transform: none; letter-spacing: 0; }
+.lista-avisos { margin-bottom: 1rem; }
+.lista-avisos .card { border-color: #f2d978; background: #fffcf0; }
