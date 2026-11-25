@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 7)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 8)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -248,6 +248,18 @@ create table if not exists public.funcionarios_fixos (
   ativo      boolean not null default true,
   criado_em  timestamptz not null default now()
 );
+
+-- =====================================================================
+-- 6h. VERSÃO 8 — quem fez cada alteração (colunas nas tabelas antigas)
+--     (vem antes das visões para elas já mostrarem essas colunas)
+-- =====================================================================
+do $$ declare t text; begin
+  foreach t in array array['perfis','produtos','servicos','lotes','entregas','pagamentos','notas','empresas','entradas','horas','funcionarios_fixos','avisos'] loop
+    execute format('alter table public.%I add column if not exists criado_por uuid', t);
+    execute format('alter table public.%I add column if not exists alterado_por uuid', t);
+    execute format('alter table public.%I add column if not exists alterado_em timestamptz', t);
+  end loop;
+end $$;
 
 -- =====================================================================
 -- 7. VISÕES (cálculos prontos) — recriadas a cada atualização
@@ -952,6 +964,83 @@ drop policy if exists folha_pag_mo on public.folha_pagamentos;
 create policy folha_pag_mo on public.folha_pagamentos for select to authenticated using (perfil_id = auth.uid());
 drop policy if exists folha_lanc_mo on public.folha_lancamentos;
 create policy folha_lanc_mo on public.folha_lancamentos for select to authenticated using (perfil_id = auth.uid());
+
+
+-- =====================================================================
+-- 10. VERSÃO 8 — vários administradores e histórico de alterações
+-- =====================================================================
+do $$ declare t text; begin
+  foreach t in array array['folha_pagamentos','folha_lancamentos','equipamentos','manutencoes','gastos_fixos','gastos'] loop
+    execute format('alter table public.%I add column if not exists criado_por uuid', t);
+    execute format('alter table public.%I add column if not exists alterado_por uuid', t);
+    execute format('alter table public.%I add column if not exists alterado_em timestamptz', t);
+  end loop;
+end $$;
+
+-- Anota quem criou / alterou cada linha (quem está logado)
+create or replace function public.marca_autor()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if auth.uid() is not null then
+    if tg_op = 'INSERT' then new.criado_por := coalesce(new.criado_por, auth.uid()); end if;
+    new.alterado_por := auth.uid();
+  end if;
+  new.alterado_em := now();
+  return new;
+end $$;
+
+-- Histórico de alterações (o que foi feito, por quem e quando)
+create table if not exists public.auditoria (
+  id          bigint generated always as identity primary key,
+  quando      timestamptz not null default now(),
+  usuario_id  uuid,
+  tabela      text not null,
+  registro    text,
+  acao        text not null,
+  dados       jsonb
+);
+create index if not exists auditoria_quando_idx on public.auditoria (quando desc);
+alter table public.auditoria enable row level security;
+drop policy if exists auditoria_dono on public.auditoria;
+create policy auditoria_dono on public.auditoria for select to authenticated using (eh_dono());
+
+create or replace function public.registra_auditoria()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  ign text[] := array['alterado_por','alterado_em','pagamento_id','folha_pagamento_id','status','finalizado_em','lida_em','visto_em'];
+  v_new jsonb; v_old jsonb; k text;
+begin
+  if auth.uid() is null then return coalesce(new, old); end if;
+  if tg_op = 'UPDATE' then
+    v_new := to_jsonb(new); v_old := to_jsonb(old);
+    foreach k in array ign loop v_new := v_new - k; v_old := v_old - k; end loop;
+    if v_new = v_old then return new; end if;
+  end if;
+  insert into auditoria (usuario_id, tabela, registro, acao, dados)
+  values (auth.uid(), tg_table_name, (to_jsonb(coalesce(new, old)) ->> 'id'), lower(tg_op),
+          to_jsonb(coalesce(new, old)) - array['criado_por','alterado_por','alterado_em','itens']);
+  return coalesce(new, old);
+end $$;
+
+do $$ declare t text; begin
+  foreach t in array array['perfis','produtos','servicos','lotes','entregas','pagamentos','notas','empresas','entradas','horas',
+                           'funcionarios_fixos','folha_pagamentos','folha_lancamentos','equipamentos','manutencoes','gastos_fixos','gastos'] loop
+    execute format('drop trigger if exists trg_autor on public.%I', t);
+    execute format('create trigger trg_autor before insert or update on public.%I for each row execute function public.marca_autor()', t);
+    execute format('drop trigger if exists trg_auditoria on public.%I', t);
+    execute format('create trigger trg_auditoria after insert or update or delete on public.%I for each row execute function public.registra_auditoria()', t);
+  end loop;
+end $$;
+drop trigger if exists trg_autor on public.avisos;
+create trigger trg_autor before insert or update on public.avisos for each row execute function public.marca_autor();
+
+-- Novo administrador: só um administrador pode transformar um login em administrador
+create or replace function public.tornar_admin(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono() then raise exception 'Apenas um administrador pode fazer isso.'; end if;
+  update perfis set papel = 'dono' where id = p_id;
+end $$;
 
 
 -- =====================================================================

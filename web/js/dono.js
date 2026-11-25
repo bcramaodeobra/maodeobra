@@ -158,7 +158,7 @@ function menuMais() {
 
 async function render() {
   try {
-    await carregarConf();
+    await Promise.all([carregarConf(), carregarNomes()]);
     if (abaAtual === "inicio") await renderInicio();
     if (abaAtual === "minha") await renderMinha();
     if (abaAtual === "maos") await renderMaos();
@@ -322,7 +322,7 @@ async function fichaHoras(mo) {
       ${vh == null ? `<div class="alerta">Defina o valor da hora no cadastro de ${esc(mo.nome.split(" ")[0])} ou em Administrativo.</div>` : ""}
       <h3>Horas lançadas em ${nomeMes(mes).toLowerCase()}</h3>
       ${horas.length ? `<ul class="lista-final">${horas.map((h) => `<li>
-        <span>${diaMes(h.data)} – <strong>${inteiro(h.horas)} h</strong> × ${moeda(h.valor_hora)}${h.observacao ? `<br><span class="small muted">${esc(h.observacao)}</span>` : ""}</span>
+        <span>${diaMes(h.data)} – <strong>${inteiro(h.horas)} h</strong> × ${moeda(h.valor_hora)}${h.observacao ? `<br><span class="small muted">${esc(h.observacao)}</span>` : ""} ${autorTag(h)}</span>
         <span style="white-space:nowrap"><strong class="num">${moeda(h.valor)}</strong>
         ${h.pago ? selo("pago", "Pago") : `<button type="button" class="icon-btn" style="color:var(--bad);font-size:1rem" data-exh="${h.id}" title="Excluir">✕</button>`}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nenhuma hora lançada neste mês.</p>`}
@@ -427,7 +427,7 @@ async function abrirFicha(moId) {
           <div class="linha1"><span>${diaMes(l.enviado_em)} – ${esc(maiusc(l.produto_nome))}: ${esc(maiusc(l.servico_nome))} – ${inteiro(l.quantidade)} PEÇAS</span>
             <span class="valor">${moeda(l.valor_total)}</span></div>
           <div class="linha2">${moeda(l.valor_unitario)} por peça · Entregue: ${inteiro(l.qtd_entregue)} · Falta: <strong>${inteiro(l.qtd_falta)}</strong> (${moeda(l.valor_aberto)})
-            ${l.observacoes ? `<br>Obs.: ${esc(l.observacoes)}` : ""}</div>
+            ${l.observacoes ? `<br>Obs.: ${esc(l.observacoes)}` : ""} ${autorTag(l)}</div>
           ${l.aviso_em ? `<div class="aviso-terminou"><span>✋ Avisou que terminou em ${dataHoraBR(l.aviso_em)}${l.aviso_mensagem ? ` — “${esc(l.aviso_mensagem)}”` : ""}</span>
             <button type="button" class="btn sec peq" data-dispensar="${l.id}">Dispensar aviso</button></div>` : ""}
           <div class="acoes">
@@ -439,7 +439,7 @@ async function abrirFicha(moId) {
 
       <h3 style="margin-top:1.2rem">Finalizado em ${nomeMes(mes).toLowerCase()} ${entregasMes.length && entregasMes.every((e) => e.pago) ? selo("pago", "Tudo pago") : ""}</h3>
       ${entregasMes.length ? `<ul class="lista-final">${entregasMes.map((e) => `
-        <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)} – ${inteiro(e.quantidade)} pç ${selo(e.tipo === "pronto" ? "pronto" : "parcial", e.tipo === "pronto" ? "Lote pronto" : "Parcial")}</span>
+        <li><span>${diaMes(e.entregue_em)} – ${esc(e.produto_nome)}: ${esc(e.servico_nome)} – ${inteiro(e.quantidade)} pç ${selo(e.tipo === "pronto" ? "pronto" : "parcial", e.tipo === "pronto" ? "Lote pronto" : "Parcial")} ${autorTag(e)}</span>
           <span style="white-space:nowrap"><strong class="num">${moeda(e.valor)}</strong>
           ${e.pago ? selo("pago", "Pago") : `<button type="button" class="icon-btn" style="color:var(--muted);font-size:1rem" data-desfazer="${e.id}" title="Desfazer">↺</button>`}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nada finalizado neste mês ainda.</p>`}
@@ -656,7 +656,7 @@ async function renderMinha() {
           <div class="linha1"><span>${diaMes(e.data)} – ${esc(maiusc(e.empresa_nome))} – ${esc(maiusc(e.produto_nome))}: ${esc(maiusc(e.servico_nome))} – ${inteiro(e.quantidade)} PEÇAS</span>
             <span class="valor">${moeda(e.valor_total)}</span></div>
           <div class="linha2">Empresa paga ${moeda(e.valor_unitario)}/peça · mão de obra ${moeda(e.valor_mao_de_obra)}/peça ·
-            lucro <strong>${moeda((e.valor_unitario - e.valor_mao_de_obra) * e.quantidade)}</strong>${e.observacoes ? `<br>Obs.: ${esc(e.observacoes)}` : ""}</div>
+            lucro <strong>${moeda((e.valor_unitario - e.valor_mao_de_obra) * e.quantidade)}</strong>${e.observacoes ? `<br>Obs.: ${esc(e.observacoes)}` : ""} ${autorTag(e)}</div>
           <div class="acoes"><button class="btn sec peq" data-edent="${e.id}">Editar</button><button class="btn perigo peq" data-rment="${e.id}">Excluir</button></div>
         </div>`).join("") : `<div class="card vazio">Nenhuma entrada em ${nomeMes(mes).toLowerCase()}. Clique em <strong>＋ Nova entrada</strong>.</div>`}
     </div>`;
@@ -906,7 +906,7 @@ async function renderMaos() {
       ${externas.length ? `<div class="card tabela-wrap"><table>
       <thead><tr><th>Nome</th><th>Recebe</th><th>Usuário</th><th>WhatsApp</th><th>Chave PIX</th><th>Fechamento</th><th>Situação</th><th></th></tr></thead>
       <tbody>${externas.map((m) => `<tr>
-        <td><strong>${esc(m.nome)}</strong></td>
+        <td><strong>${esc(m.nome)}</strong><br>${autorTag(m)}</td>
         <td class="small">${formaTxt(m)}</td>
         <td>${esc(m.usuario)}</td>
         <td>${m.whatsapp ? `<a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : "—"}</td>
@@ -923,7 +923,7 @@ async function renderMaos() {
       ${funcs.length ? `<div class="card tabela-wrap"><table>
       <thead><tr><th>Nome</th><th>Recebe</th><th>Cargo</th><th class="right">Hora extra</th><th>WhatsApp</th><th>Chave PIX</th><th>Login</th><th></th></tr></thead>
       <tbody>${funcs.map((p) => `<tr>
-        <td><button class="link" data-fichaf="${p.chave}"><strong>${esc(p.nome)}</strong></button></td>
+        <td><button class="link" data-fichaf="${p.chave}"><strong>${esc(p.nome)}</strong></button><br>${autorTag(p.reg)}</td>
         <td class="small">${recebeTxt(p)}</td>
         <td class="small">${esc(p.cargo || "—")}</td>
         <td class="right num">${p.valor_hora_extra != null ? moeda(p.valor_hora_extra) : "—"}</td>
@@ -978,29 +978,7 @@ async function renderMaos() {
     });
   }));
 
-  $$("[data-senha]", main).forEach((b) => (b.onclick = () => {
-    const m = todas.find((x) => x.id === b.dataset.senha);
-    abrirModal({
-      titulo: `Login de ${m.nome}`,
-      conteudo: `<div class="linha">
-          <div><label>Usuário</label><input name="usuario" value="${esc(m.usuario)}" required autocapitalize="none"></div>
-          <div><label>Nova senha (deixe em branco para manter)</label><input name="senha" minlength="6" placeholder="mín. 6 caracteres"></div>
-        </div>
-        <p class="muted small">Depois de salvar, passe o novo usuário e/ou a nova senha para ${esc(m.nome)}. A pessoa pode trocar a senha depois no painel dela.</p>
-        <button type="submit" class="btn bloco">Salvar</button>`,
-      onSubmit: async (fd) => {
-        const novo = String(fd.get("usuario") || "").trim().toLowerCase();
-        const senha = String(fd.get("senha") || "");
-        if (!novo) throw new Error("Informe o usuário.");
-        if (senha && senha.length < 6) throw new Error("A senha precisa ter pelo menos 6 caracteres.");
-        const mudou = [];
-        if (novo !== m.usuario) { await adminUsuarios({ acao: "alterar_usuario", id: m.id, usuario: novo }); mudou.push(`usuário: ${novo}`); }
-        if (senha) { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha }); mudou.push("senha nova"); }
-        aviso(mudou.length ? `Salvo! ${m.nome} — ${mudou.join(" e ")}` : "Nada foi alterado.");
-        renderMaos();
-      },
-    });
-  }));
+  $$("[data-senha]", main).forEach((b) => (b.onclick = () => modalLogin(todas.find((x) => x.id === b.dataset.senha), renderMaos)));
 
   $$("[data-at]", main).forEach((b) => (b.onclick = async () => {
     const m = externas.find((x) => x.id === b.dataset.at);
@@ -1226,7 +1204,7 @@ function detalheFechamento(mo, x, pags, p) {
         <tfoot><tr><td>Total</td><td class="right num">${r.qtd}</td><td></td><td class="right num">${moeda(x.total)}</td><td></td></tr></tfoot>
       </table></div>` : `<p class="muted">Nada finalizado neste período.</p>`}
       ${pags.length ? `<h3 style="margin-top:1rem">Pagamentos registrados</h3><ul class="lista-final">${pags.map((pg) => `<li>
-        <span>${dataBR(pg.pago_em)} – ${esc(rotuloPeriodo(pg.tipo, pg.inicio))}</span>
+        <span>${dataBR(pg.pago_em)} – ${esc(rotuloPeriodo(pg.tipo, pg.inicio))} ${autorTag(pg)}</span>
         <span style="display:flex;gap:.5rem;align-items:center"><strong class="num">${moeda(pg.valor_total)}</strong>
         <button type="button" class="btn perigo peq" data-desfpag="${pg.id}">Desfazer</button></span></li>`).join("")}</ul>` : ""}
       ${linhas.length ? `<div class="acoes">
@@ -1363,13 +1341,14 @@ async function renderAdmin(pre = {}) {
           <h2>Notas enviadas</h2>
           ${notas.length ? `<ul class="lista-final">${notas.map((n) => `<li>
             <span>${dataBR(n.enviada_em)} – <strong>${esc(nomeMo(n.mao_de_obra_id))}</strong> – ${esc(n.inicio ? rotuloPeriodo(n.tipo, n.inicio) : nomeMes(n.mes))}<br>
-              <span class="small muted">${moeda(n.valor_total)}</span></span>
+              <span class="small muted">${moeda(n.valor_total)}</span> ${autorTag(n)}</span>
             ${n.lida_em ? selo("pronto", "Lida") : selo("aberto", "Não lida")}</li>`).join("")}</ul>`
             : `<p class="muted small">Nenhuma nota enviada ainda.</p>`}
         </div>
       </div>
     </div>
 
+    ${cardAdmins()}
     <div class="card section" id="cardAcessos" style="margin-top:1rem">
       <h2>🔑 Acessos</h2>
       <div class="grid-admin">
@@ -1410,6 +1389,7 @@ async function renderAdmin(pre = {}) {
     </div>`;
 
   ligarTipos();
+  ligarAdmins();
   ligarCalculadora();
   ligarPagamentos(maos, pre);
   ligarRelatorio();
@@ -1866,9 +1846,9 @@ async function fichaFuncionario(p, mes = inicioMes()) {
   const r = linhaDaFolha(resumo, p) || {};
   const pago = !!r.folha_pagamento_id;
   const itens = [
-    ...horas.map((h) => ({ k: "horas", id: h.id, data: h.data, desc: h.observacao, base: `${inteiro(h.horas)} h × ${moeda(h.valor_hora)}`, valor: h.valor, travado: h.pago })),
+    ...horas.map((h) => ({ k: "horas", id: h.id, data: h.data, desc: h.observacao, base: `${inteiro(h.horas)} h × ${moeda(h.valor_hora)}`, valor: h.valor, travado: h.pago, reg: h })),
     ...lancs.map((l) => ({ k: l.tipo, id: l.id, data: l.data, desc: l.descricao,
-      base: l.tipo === "hora_extra" ? `${inteiro(l.horas)} h × ${moeda(l.valor_hora)}` : "", valor: l.valor, travado: !!l.folha_pagamento_id })),
+      base: l.tipo === "hora_extra" ? `${inteiro(l.horas)} h × ${moeda(l.valor_hora)}` : "", valor: l.valor, travado: !!l.folha_pagamento_id, reg: l })),
   ].sort((a, b) => (a.data < b.data ? 1 : -1));
   const neg = (k) => k === "vale" || k === "desconto";
   const m = abrirModal({
@@ -1902,7 +1882,7 @@ async function fichaFuncionario(p, mes = inicioMes()) {
       </div>`}
       ${itens.length ? `<ul class="lista-final">${itens.map((i) => `<li>
         <span>${diaMes(i.data)} <span class="chip-lanc ${LANC[i.k][1]}">${LANC[i.k][0]}</span>
-          ${i.base ? `<span class="small">${i.base}</span>` : ""}${i.desc ? `<br><span class="small muted">${esc(i.desc)}</span>` : ""}</span>
+          ${i.base ? `<span class="small">${i.base}</span>` : ""}${i.desc ? `<br><span class="small muted">${esc(i.desc)}</span>` : ""} ${autorTag(i.reg)}</span>
         <span style="white-space:nowrap;display:flex;gap:.5rem;align-items:center"><strong class="num ${neg(i.k) ? "neg" : ""}">${neg(i.k) ? "− " : ""}${moeda(i.valor)}</strong>
           ${i.travado ? "" : lixeira(`data-exl="${i.k}:${i.id}"`, "Excluir lançamento")}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nenhum lançamento neste mês.</p>`}
@@ -2224,7 +2204,7 @@ async function renderGastos() {
           <div class="seg">${[["todos", "Todos"], ["fixos", "Fixos"], ["variaveis", "Variáveis"]].map(([k, t]) => `<button class="${k === filtroGasto ? "ativo" : ""}" data-fg="${k}">${t}</button>`).join("")}</div></div>
         ${lista.length ? `<ul class="lista-final">${lista.map((g) => `<li>
           <span>${diaMes(g.data)} – <strong>${esc(g.descricao)}</strong> <span class="chip-tipo">${esc(g.categoria)}</span>
-            ${g.gasto_fixo_id ? `<span class="small muted">fixo</span>` : ""}${g.observacao ? `<br><span class="small muted">${esc(g.observacao)}</span>` : ""}</span>
+            ${g.gasto_fixo_id ? `<span class="small muted">fixo</span>` : ""}${g.observacao ? `<br><span class="small muted">${esc(g.observacao)}</span>` : ""} ${autorTag(g)}</span>
           <span style="white-space:nowrap;display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(g.valor)}</strong>
             ${g.manutencao_id ? "" : `<button class="btn sec peq" data-edg="${g.id}">Editar</button>`}${lixeira(`data-exg="${g.id}"`, "Excluir gasto")}</span></li>`).join("")}</ul>
           <div class="soma-final"><span>TOTAL</span><span>${moeda(soma(lista, "valor"))}</span></div>`
@@ -2295,7 +2275,7 @@ async function modalGastosFixos() {
     conteudo: `
       <p class="muted small" style="margin-top:0">Estes gastos entram sozinhos no começo de cada mês. Mudar o valor aqui vale para os próximos meses.</p>
       ${fixos.length ? `<ul class="lista-final">${fixos.map((f) => `<li>
-        <span><strong>${esc(f.descricao)}</strong> <span class="chip-tipo">${esc(f.categoria)}</span><br><span class="small muted">todo dia ${f.dia}</span></span>
+        <span><strong>${esc(f.descricao)}</strong> <span class="chip-tipo">${esc(f.categoria)}</span><br><span class="small muted">todo dia ${f.dia}</span> ${autorTag(f)}</span>
         <span style="display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(f.valor)}</strong>
           <button type="button" class="btn sec peq" data-edf="${f.id}">Editar</button>${lixeira(`data-exf="${f.id}"`, "Parar de lançar")}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nenhum gasto fixo. Ao lançar um gasto, marque "Repetir todo mês".</p>`}
@@ -2357,7 +2337,7 @@ async function renderEquipamentos() {
       <div class="lista-equip">${equips.map((e) => `<button class="equip-card ${e.id === equipSel ? "sel" : ""}" data-eq="${e.id}">
         <span class="eq-topo"><strong>${esc(e.nome)}</strong>${selo(SITUACOES[e.situacao][1], SITUACOES[e.situacao][0])}</span>
         <span class="small muted">${e.data_compra ? `Comprado em ${dataBR(e.data_compra)}` : "Data de compra não informada"}${e.valor_compra != null ? ` · ${moeda(e.valor_compra)}` : ""}</span>
-        <span class="small">Manutenção total: <strong>${moeda(totalDe(e.id))}</strong></span></button>`).join("")}</div>
+        <span class="small">Manutenção total: <strong>${moeda(totalDe(e.id))}</strong></span>${autorTag(e)}</button>`).join("")}</div>
       <div class="card">
         <div class="section-head" style="align-items:flex-start">
           <div><h2 style="margin:0">${esc(sel.nome)}</h2><p class="small muted" style="margin:.2rem 0 0">${[sel.modelo, sel.numero_serie ? `nº ${sel.numero_serie}` : ""].filter(Boolean).map(esc).join(" · ") || "&nbsp;"}</p></div>
@@ -2370,7 +2350,7 @@ async function renderEquipamentos() {
         </div>
         ${sel.observacao ? `<p class="small">${esc(sel.observacao)}</p>` : ""}
         <div class="section-head"><h3 style="margin:0">Histórico de manutenção</h3><button class="btn acento peq" id="eqManut">＋ Registrar manutenção</button></div>
-        ${hist.length ? `<ul class="lista-final">${hist.map((h) => `<li><span>${dataBR(h.data)} – <strong>${esc(h.descricao)}</strong>${h.responsavel ? `<br><span class="small muted">${esc(h.responsavel)}</span>` : ""}</span>
+        ${hist.length ? `<ul class="lista-final">${hist.map((h) => `<li><span>${dataBR(h.data)} – <strong>${esc(h.descricao)}</strong>${h.responsavel ? `<br><span class="small muted">${esc(h.responsavel)}</span>` : ""} ${autorTag(h)}</span>
           <span style="display:flex;gap:.4rem;align-items:center"><strong class="num">${moeda(h.valor)}</strong>
             <button class="btn sec peq" data-edm="${h.id}">Editar</button>${lixeira(`data-exm="${h.id}"`, "Excluir manutenção")}</span></li>`).join("")}</ul>`
           : `<p class="muted">Nenhuma manutenção registrada.</p>`}
@@ -2544,6 +2524,135 @@ async function renderRelatorios() {
     ...ranking.map((r) => ["Produto", r.nome, r.qtd, r.valor]),
     ...pessoas.map((x) => ["Mão de obra", x.nome, qtdTxtP(x), x.valor]),
   ].map((l) => l.map((v) => (typeof v === "number" ? v.toFixed(2).replace(".", ",") : v))));
+}
+
+
+// ===============================================================
+// VERSÃO 8 — vários administradores e "quem fez" em cada alteração
+// ===============================================================
+let NOMES = {};
+async function carregarNomes() {
+  try { (await q(sb.from("perfis").select("id, nome"))).forEach((p) => (NOMES[p.id] = p.nome)); } catch { /* segue sem nomes */ }
+}
+const quandoCurto = (iso) => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+// Etiqueta pequena: quem fez a última alteração e quando
+const autorTag = (r) => {
+  const id = r?.alterado_por || r?.criado_por;
+  if (!id || !NOMES[id]) return "";
+  return `<span class="autor" title="Última alteração por ${esc(NOMES[id])}">${esc(NOMES[id].split(" ")[0])}${r.alterado_em ? ` · ${quandoCurto(r.alterado_em)}` : ""}</span>`;
+};
+
+async function carregarAdmins() {
+  return q(sb.from("perfis").select("*").eq("papel", "dono").order("nome"));
+}
+function cardAdmins() {
+  return `<div class="card section" id="cardAdmins" style="margin-top:1rem">
+    <div class="section-head"><h2 style="margin:0">Administradores</h2><button class="btn acento peq" id="novoAdmin" type="button">＋ Novo administrador</button></div>
+    <p class="muted small" style="margin-top:.2rem">Quem pode entrar no painel do dono. Cada alteração no sistema fica anotada com o nome de quem fez.</p>
+    <div id="listaAdmins"><p class="muted small">Carregando…</p></div>
+  </div>
+  <div class="card section" id="cardHistorico" style="margin-top:1rem">
+    <div class="section-head"><h2 style="margin:0">Histórico de alterações</h2>
+      <select id="histFiltro" style="max-width:260px;width:auto"><option value="">Todos os administradores</option></select></div>
+    <div id="listaHist"><p class="muted small">Carregando…</p></div>
+  </div>`;
+}
+async function ligarAdmins() {
+  const admins = await carregarAdmins();
+  const ativos = admins.filter((a) => a.ativo);
+  $("#listaAdmins").innerHTML = `<ul class="lista-final">${admins.map((a) => `<li>
+    <span><strong>${esc(a.nome)}</strong>${a.id === perfil.id ? ` <span class="small muted">(você)</span>` : ""}<br>
+      <span class="small muted">usuário: ${esc(a.usuario)}</span> ${a.ativo ? "" : selo("cancelado", "Desativado")}</span>
+    <span style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end">
+      ${a.id === perfil.id ? `<button class="btn sec peq" type="button" id="adminMinhaConta">Minha conta</button>`
+        : `<button class="btn sec peq" type="button" data-adlogin="${a.id}">Login</button>
+           <button class="btn ${a.ativo ? "perigo" : "ok"} peq" type="button" data-adat="${a.id}">${a.ativo ? "Desativar" : "Ativar"}</button>`}
+    </span></li>`).join("")}</ul>`;
+  $("#adminMinhaConta")?.addEventListener("click", modalMinhaConta);
+  $$("[data-adlogin]").forEach((b) => (b.onclick = () => modalLogin(admins.find((a) => a.id === b.dataset.adlogin), () => ligarAdmins())));
+  $$("[data-adat]").forEach((b) => (b.onclick = async () => {
+    const a = admins.find((x) => x.id === b.dataset.adat);
+    if (a.ativo && ativos.length <= 1) return aviso("Precisa ficar pelo menos um administrador ativo.", true);
+    if (!(await confirmar(`${a.ativo ? "Desativar" : "Ativar"} o acesso de ${a.nome} ao painel do dono?`, a.ativo ? "Desativar" : "Ativar"))) return;
+    try { await adminUsuarios({ acao: a.ativo ? "desativar" : "ativar", id: a.id }); aviso("Pronto!"); ligarAdmins(); }
+    catch (e) { aviso(e.message, true); }
+  }));
+  $("#novoAdmin").onclick = () => abrirModal({
+    titulo: "Novo administrador",
+    conteudo: `<p class="muted small" style="margin-top:0">Ele vai entrar no mesmo painel do dono, com acesso a tudo.</p>
+      <div class="linha"><div><label>Nome *</label><input name="nome" required></div></div>
+      <div class="linha">
+        <div><label>Usuário (login) *</label><input name="usuario" required autocapitalize="none" placeholder="ex.: carlos"></div>
+        <div><label>Senha inicial *</label><input name="senha" required minlength="6" placeholder="mín. 6 caracteres"></div>
+      </div>
+      <div class="linha"><div><label>WhatsApp</label><input name="whatsapp" inputmode="tel"></div></div>
+      <button type="submit" class="btn bloco">Criar administrador</button>`,
+    onSubmit: async (fd) => {
+      const nome = String(fd.get("nome") || "").trim(), usuario = String(fd.get("usuario") || "").trim().toLowerCase();
+      if (!nome || !usuario || String(fd.get("senha") || "").length < 6) throw new Error("Preencha nome, usuário e uma senha com pelo menos 6 caracteres.");
+      const novo = await adminUsuarios({ acao: "criar", nome, usuario, senha: fd.get("senha"), whatsapp: fd.get("whatsapp") || null });
+      if (!novo?.id) throw new Error("Não foi possível criar o login.");
+      await rpc("tornar_admin", { p_id: novo.id });
+      await carregarNomes();
+      aviso(`Administrador criado! Usuário: ${usuario}`);
+      ligarAdmins();
+    },
+  });
+  const sel = $("#histFiltro");
+  sel.innerHTML = `<option value="">Todos os administradores</option>${admins.map((a) => `<option value="${a.id}">${esc(a.nome)}</option>`).join("")}`;
+  sel.onchange = () => ligarHistorico(sel.value);
+  ligarHistorico("");
+}
+
+const TABELAS_HIST = {
+  perfis: "cadastro", produtos: "produto", servicos: "serviço", lotes: "lote", entregas: "entrega", pagamentos: "pagamento",
+  notas: "nota de pagamento", empresas: "empresa", entradas: "entrada de empresa", horas: "horas", funcionarios_fixos: "funcionário",
+  folha_pagamentos: "pagamento da folha", folha_lancamentos: "lançamento da folha", equipamentos: "equipamento",
+  manutencoes: "manutenção", gastos_fixos: "gasto fixo", gastos: "gasto",
+};
+const ACOES_HIST = { insert: "Criou", update: "Alterou", delete: "Excluiu" };
+function descreverHist(h) {
+  const d = h.dados || {};
+  const nome = d.nome || d.descricao || (d.mao_de_obra_id && NOMES[d.mao_de_obra_id]) || (d.perfil_id && NOMES[d.perfil_id]) || "";
+  const valor = d.valor_total ?? d.valor ?? d.salario;
+  const qtd = d.quantidade != null ? `${inteiro(d.quantidade)} ${h.tabela === "horas" ? "h" : "pç"}` : d.horas != null ? `${inteiro(d.horas)} h` : "";
+  const acao = h.tabela === "perfis" && h.acao === "update" && d.excluido_em ? "Excluiu" : ACOES_HIST[h.acao];
+  return `${acao} ${TABELAS_HIST[h.tabela] || h.tabela}${nome ? ` <strong>${esc(nome)}</strong>` : ""}${qtd ? ` · ${qtd}` : ""}${valor != null && !isNaN(valor) ? ` · ${moeda(valor)}` : ""}`;
+}
+async function ligarHistorico(usuario) {
+  let c = sb.from("auditoria").select("*").order("quando", { ascending: false }).limit(120);
+  if (usuario) c = c.eq("usuario_id", usuario);
+  let hist = [];
+  try { hist = await q(c); } catch (e) { $("#listaHist").innerHTML = `<p class="muted small">${esc(e.message)}</p>`; return; }
+  $("#listaHist").innerHTML = hist.length ? `<ul class="lista-final hist">${hist.map((h) => `<li>
+    <span>${descreverHist(h)}</span>
+    <span class="autor">${esc((NOMES[h.usuario_id] || "—").split(" ")[0])} · ${quandoCurto(h.quando)}</span></li>`).join("")}</ul>
+    <p class="muted small">Mostrando as últimas ${hist.length} alterações.</p>`
+    : `<p class="muted small">Nenhuma alteração registrada ainda.</p>`;
+}
+
+// Troca usuário e/ou senha de um login (mão de obra, funcionário ou administrador)
+function modalLogin(m, depois) {
+  abrirModal({
+    titulo: `Login de ${m.nome}`,
+    conteudo: `<div class="linha">
+        <div><label>Usuário</label><input name="usuario" value="${esc(m.usuario)}" required autocapitalize="none"></div>
+        <div><label>Nova senha (deixe em branco para manter)</label><input name="senha" minlength="6" placeholder="mín. 6 caracteres"></div>
+      </div>
+      <p class="muted small">Depois de salvar, passe o novo usuário e/ou a nova senha para ${esc(m.nome)}.</p>
+      <button type="submit" class="btn bloco">Salvar</button>`,
+    onSubmit: async (fd) => {
+      const novo = String(fd.get("usuario") || "").trim().toLowerCase();
+      const senha = String(fd.get("senha") || "");
+      if (!novo) throw new Error("Informe o usuário.");
+      if (senha && senha.length < 6) throw new Error("A senha precisa ter pelo menos 6 caracteres.");
+      const mudou = [];
+      if (novo !== m.usuario) { await adminUsuarios({ acao: "alterar_usuario", id: m.id, usuario: novo }); mudou.push(`usuário: ${novo}`); }
+      if (senha) { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha }); mudou.push("senha nova"); }
+      aviso(mudou.length ? `Salvo! ${m.nome} — ${mudou.join(" e ")}` : "Nada foi alterado.");
+      depois?.();
+    },
+  });
 }
 
 render();

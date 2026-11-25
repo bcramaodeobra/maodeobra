@@ -742,3 +742,9 @@ body.v2 .menu-mais small { font-weight: 500; font-size: .78rem; }
   .lista-equip { grid-template-columns: 1fr; }
 }
 @media print { .barra-periodo, .acoes, .topo-acoes { display: none !important; } }
+
+/* Versão 8 — quem fez cada alteração */
+.autor { display: inline-block; font-size: .68rem; font-weight: 500; color: #8a93a6; background: #f3f5f9; border-radius: 99px;
+  padding: .05rem .45rem; margin-left: .2rem; white-space: nowrap; vertical-align: middle; line-height: 1.5; }
+.btn-nome .autor, .equip-card .autor { margin: .2rem 0 0; align-self: flex-start; }
+.lista-final.hist li { font-size: .88rem; }
