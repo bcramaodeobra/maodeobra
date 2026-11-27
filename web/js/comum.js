@@ -28,7 +28,7 @@ export async function exigirPapel(papel) {
   try { perfil = await carregarPerfil(); } catch { /* inativo */ }
   if (!perfil) { location.replace("index.html"); throw new Error("sem sessão"); }
   if (perfil.papel !== papel) {
-    location.replace(perfil.papel === "dono" ? "dono.html" : "producao.html");
+    location.replace(perfil.papel === "dono" ? "dono.html" : perfil.papel === "motorista" ? "motorista.html" : "producao.html");
     throw new Error("papel errado");
   }
   return perfil;

@@ -1349,6 +1349,7 @@ async function renderAdmin(pre = {}) {
     </div>
 
     ${cardAdmins()}
+    ${cardMotoristas()}
     <div class="card section" id="cardAcessos" style="margin-top:1rem">
       <h2>🔑 Acessos</h2>
       <div class="grid-admin">
@@ -1390,6 +1391,7 @@ async function renderAdmin(pre = {}) {
 
   ligarTipos();
   ligarAdmins();
+  ligarMotoristas();
   ligarCalculadora();
   ligarPagamentos(maos, pre);
   ligarRelatorio();
@@ -2651,6 +2653,83 @@ function modalLogin(m, depois) {
       if (senha) { await adminUsuarios({ acao: "redefinir_senha", id: m.id, senha }); mudou.push("senha nova"); }
       aviso(mudou.length ? `Salvo! ${m.nome} — ${mudou.join(" e ")}` : "Nada foi alterado.");
       depois?.();
+    },
+  });
+}
+
+
+// ===============================================================
+// VERSÃO 9 — Cadastro de Motorista (recebe os avisos de "terminei")
+// ===============================================================
+function cardMotoristas() {
+  return `<div class="card section" id="cardMotoristas" style="margin-top:1rem">
+    <div class="section-head"><h2 style="margin:0">Cadastro de Motorista</h2><button class="btn acento peq" id="novoMotorista" type="button">＋ Novo motorista</button></div>
+    <p class="muted small" style="margin-top:.2rem">O motorista entra pelo mesmo endereço do sistema e vê só os lotes que as costureiras avisaram que terminaram:
+      nome, endereço, serviço e peças — <strong>nunca valores em R$</strong>. O celular dele recebe uma notificação a cada aviso.</p>
+    <div id="listaMotoristas"><p class="muted small">Carregando…</p></div>
+  </div>`;
+}
+async function ligarMotoristas() {
+  const mots = (await q(sb.from("perfis").select("*").eq("papel", "motorista").order("nome"))).filter((m) => !m.excluido_em);
+  $("#listaMotoristas").innerHTML = mots.length ? `<ul class="lista-final">${mots.map((m) => `<li>
+      <span><strong>${esc(m.nome)}</strong> ${m.ativo ? "" : selo("cancelado", "Desativado")}<br>
+        <span class="small muted">usuário: ${esc(m.usuario)}${m.whatsapp ? ` · <a href="${linkWhats(m.whatsapp)}" target="_blank" rel="noopener">${esc(m.whatsapp)}</a>` : ""}</span> ${autorTag(m)}</span>
+      <span style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn sec peq" type="button" data-motedit="${m.id}">Editar</button>
+        <button class="btn sec peq" type="button" data-motlogin="${m.id}">Login</button>
+        <button class="btn ${m.ativo ? "sec" : "ok"} peq" type="button" data-motat="${m.id}">${m.ativo ? "Desativar" : "Ativar"}</button>
+        ${lixeira(`data-motex="${m.id}"`, `Excluir ${esc(m.nome)}`)}
+      </span></li>`).join("")}</ul>` : `<p class="muted small">Nenhum motorista cadastrado.</p>`;
+  const mot = (id) => mots.find((m) => m.id === id);
+  $$("[data-motlogin]").forEach((b) => (b.onclick = () => modalLogin(mot(b.dataset.motlogin), ligarMotoristas)));
+  $$("[data-motat]").forEach((b) => (b.onclick = async () => {
+    const m = mot(b.dataset.motat);
+    if (!(await confirmar(`${m.ativo ? "Desativar" : "Ativar"} o acesso de ${m.nome}?`, m.ativo ? "Desativar" : "Ativar"))) return;
+    try { await adminUsuarios({ acao: m.ativo ? "desativar" : "ativar", id: m.id }); aviso("Pronto!"); ligarMotoristas(); } catch (e) { aviso(e.message, true); }
+  }));
+  $$("[data-motex]").forEach((b) => (b.onclick = async () => {
+    const m = mot(b.dataset.motex);
+    if (!(await confirmar(`Excluir o motorista ${m.nome}? Ele perde o acesso e para de receber os avisos.`, "Excluir"))) return;
+    try {
+      if (m.ativo) { try { await adminUsuarios({ acao: "desativar", id: m.id }); } catch { /* segue */ } }
+      await q(sb.from("perfis").update({ excluido_em: agoraIso(), ativo: false }).eq("id", m.id));
+      aviso("Motorista excluído."); ligarMotoristas();
+    } catch (e) { aviso(e.message, true); }
+  }));
+  $$("[data-motedit]").forEach((b) => (b.onclick = () => {
+    const m = mot(b.dataset.motedit);
+    abrirModal({
+      titulo: `Editar ${m.nome}`,
+      conteudo: `<div class="linha"><div><label>Nome *</label><input name="nome" value="${esc(m.nome)}" required></div></div>
+        <div class="linha"><div><label>Contato (WhatsApp)</label><input name="whatsapp" value="${esc(m.whatsapp)}" inputmode="tel"></div></div>
+        <p class="muted small">Para mudar usuário ou senha, use o botão Login.</p>
+        <button type="submit" class="btn bloco">Salvar</button>`,
+      onSubmit: async (fd) => {
+        if (!String(fd.get("nome") || "").trim()) throw new Error("Informe o nome.");
+        await q(sb.from("perfis").update({ nome: fd.get("nome"), whatsapp: fd.get("whatsapp") || null }).eq("id", m.id));
+        aviso("Salvo!"); ligarMotoristas();
+      },
+    });
+  }));
+  $("#novoMotorista").onclick = () => abrirModal({
+    titulo: "Novo motorista",
+    conteudo: `<div class="linha"><div><label>Nome do motorista *</label><input name="nome" required></div></div>
+      <div class="linha"><div><label>Contato (WhatsApp)</label><input name="whatsapp" inputmode="tel" placeholder="(11) 99999-9999"></div></div>
+      <div class="linha">
+        <div><label>Usuário (login) *</label><input name="usuario" required autocapitalize="none" placeholder="ex.: joao"></div>
+        <div><label>Senha inicial *</label><input name="senha" required minlength="6" placeholder="mín. 6 caracteres"></div>
+      </div>
+      <p class="muted small">Depois, peça para ele entrar em <strong>${esc(location.host)}</strong> pelo celular, instalar o app e tocar em <strong>Ativar notificações</strong>.</p>
+      <button type="submit" class="btn bloco">Cadastrar motorista</button>`,
+    onSubmit: async (fd) => {
+      const nome = String(fd.get("nome") || "").trim(), usuario = String(fd.get("usuario") || "").trim().toLowerCase();
+      if (!nome || !usuario || String(fd.get("senha") || "").length < 6) throw new Error("Preencha nome, usuário e uma senha com pelo menos 6 caracteres.");
+      const novo = await adminUsuarios({ acao: "criar", nome, usuario, senha: fd.get("senha"), whatsapp: fd.get("whatsapp") || null });
+      if (!novo?.id) throw new Error("Não foi possível criar o login.");
+      await rpc("tornar_motorista", { p_id: novo.id });
+      await carregarNomes();
+      aviso(`Motorista cadastrado! Usuário: ${usuario}`);
+      ligarMotoristas();
     },
   });
 }

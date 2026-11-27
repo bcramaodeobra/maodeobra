@@ -1,5 +1,5 @@
 -- =====================================================================
---  Controle de Mão de Obra — Fábrica de Bordados  (versão 8)
+--  Controle de Mão de Obra — Fábrica de Bordados  (versão 9)
 --  Instalação nova: rode este arquivo inteiro no Supabase (SQL Editor > Run)
 --  Pode ser rodado de novo sem apagar dados (é assim que se atualiza).
 -- =====================================================================
@@ -1040,6 +1040,152 @@ returns void language plpgsql security definer set search_path = public as $$
 begin
   if not eh_dono() then raise exception 'Apenas um administrador pode fazer isso.'; end if;
   update perfis set papel = 'dono' where id = p_id;
+end $$;
+
+
+-- =====================================================================
+-- 11. VERSÃO 9 — motorista: recebe os avisos de "terminei" (sem valores)
+-- =====================================================================
+alter table public.perfis drop constraint if exists perfis_papel_check;
+alter table public.perfis add constraint perfis_papel_check check (papel in ('dono','mao_de_obra','motorista'));
+alter table public.avisos add column if not exists buscado_em timestamptz;
+alter table public.avisos add column if not exists buscado_por uuid;
+
+create or replace function public.eh_motorista()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.perfis where id = auth.uid() and papel = 'motorista' and ativo);
+$$;
+
+-- Transforma um login novo em motorista (só um administrador pode)
+create or replace function public.tornar_motorista(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono() then raise exception 'Apenas um administrador pode fazer isso.'; end if;
+  update perfis set papel = 'motorista' where id = p_id and papel = 'mao_de_obra';
+end $$;
+
+-- O que o motorista vê: quem terminou, onde buscar e o que buscar. Nunca valores.
+drop function if exists public.avisos_motorista();
+create or replace function public.avisos_motorista()
+returns table (aviso_id bigint, avisado_em timestamptz, costureira text, whatsapp text, endereco text,
+  produto text, servico text, pecas int, mensagem text, pendente boolean, buscado_em timestamptz, buscado_por text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not (eh_motorista() or eh_dono()) then raise exception 'Sem permissão.'; end if;
+  return query
+  select a.id, a.criado_em, pf.nome, pf.whatsapp, pf.endereco, p.nome, s.nome,
+         (l.quantidade - coalesce((select sum(e.quantidade) from entregas e where e.lote_id = l.id), 0))::int,
+         a.mensagem, (a.visto_em is null and l.status = 'aberto'), a.buscado_em, bp.nome
+    from avisos a
+    join lotes l     on l.id = a.lote_id
+    join perfis pf   on pf.id = a.mao_de_obra_id
+    join produtos p  on p.id = l.produto_id
+    join servicos s  on s.id = l.servico_id
+    left join perfis bp on bp.id = a.buscado_por
+   where (a.visto_em is null and l.status = 'aberto') or a.criado_em > now() - interval '7 days'
+   order by (a.visto_em is null and l.status = 'aberto') desc, a.criado_em desc
+   limit 80;
+end $$;
+
+-- O motorista marca que já buscou (ou desfaz)
+create or replace function public.marcar_buscado(p_aviso bigint, p_buscado boolean default true)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not (eh_motorista() or eh_dono()) then raise exception 'Sem permissão.'; end if;
+  update avisos set buscado_em = case when p_buscado then now() end,
+                    buscado_por = case when p_buscado then auth.uid() end
+   where id = p_aviso;
+end $$;
+
+-- Celulares inscritos para receber notificação
+create table if not exists public.push_inscricoes (
+  id          bigint generated always as identity primary key,
+  usuario_id  uuid not null references public.perfis(id) on delete cascade,
+  endpoint    text not null unique,
+  p256dh      text not null,
+  auth        text not null,
+  criado_em   timestamptz not null default now()
+);
+alter table public.push_inscricoes enable row level security;
+drop policy if exists push_proprio on public.push_inscricoes;
+create policy push_proprio on public.push_inscricoes for all to authenticated
+  using (usuario_id = auth.uid()) with check (usuario_id = auth.uid());
+
+-- Quando a costureira avisa "terminei", o banco chama a função que manda a notificação
+do $$ begin
+  create extension if not exists pg_net with schema extensions;
+exception when others then raise notice 'pg_net indisponível: as notificações ficam só dentro do app.';
+end $$;
+insert into public.configuracoes (chave, valor) values ('codigo_push', md5(random()::text || clock_timestamp()::text))
+on conflict (chave) do nothing;
+insert into public.configuracoes (chave, valor) values ('url_funcoes', 'https://bxiedafrizydtdvqkwgn.supabase.co/functions/v1')
+on conflict (chave) do nothing;
+
+create or replace function public.push_aviso()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_cod text; v_url text;
+begin
+  select valor into v_cod from configuracoes where chave = 'codigo_push';
+  select valor into v_url from configuracoes where chave = 'url_funcoes';
+  begin
+    perform net.http_post(
+      url := v_url || '/enviar-push',
+      body := jsonb_build_object('aviso_id', new.id),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-codigo-push', v_cod));
+  exception when others then null; -- sem notificação: o aviso continua no app
+  end;
+  return new;
+end $$;
+drop trigger if exists trg_push_aviso on public.avisos;
+create trigger trg_push_aviso after insert on public.avisos for each row execute function public.push_aviso();
+
+
+-- O motorista também envia lotes: escolhe costureira, produto, serviço e quantidade.
+-- O preço vem sempre do cadastro do serviço (ele nunca vê nem informa valores).
+drop function if exists public.catalogo_motorista();
+create or replace function public.catalogo_motorista()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not (eh_motorista() or eh_dono()) then raise exception 'Sem permissão.'; end if;
+  return jsonb_build_object(
+    'maos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome) from perfis
+      where papel = 'mao_de_obra' and ativo and excluido_em is null and coalesce(forma_pagamento, 'producao') = 'producao'), '[]'::jsonb),
+    'produtos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nome', nome) order by nome) from produtos
+      where ativo and excluido_em is null), '[]'::jsonb),
+    'servicos', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'produto_id', produto_id, 'nome', nome) order by nome) from servicos
+      where ativo and excluido_em is null), '[]'::jsonb));
+end $$;
+
+create or replace function public.enviar_lote_motorista(p_mao_de_obra uuid, p_servico bigint, p_quantidade int, p_observacoes text default null)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare v_s servicos%rowtype; v_id bigint;
+begin
+  if not eh_motorista() then raise exception 'Apenas o motorista usa esta opção.'; end if;
+  if p_quantidade is null or p_quantidade <= 0 then raise exception 'Informe a quantidade.'; end if;
+  select * into v_s from servicos where id = p_servico and ativo and excluido_em is null;
+  if not found then raise exception 'Serviço não encontrado.'; end if;
+  if not exists (select 1 from perfis where id = p_mao_de_obra and papel = 'mao_de_obra' and ativo) then
+    raise exception 'Costureira não encontrada.';
+  end if;
+  insert into lotes (mao_de_obra_id, produto_id, servico_id, quantidade, valor_unitario, observacoes)
+  values (p_mao_de_obra, v_s.produto_id, v_s.id, p_quantidade, v_s.valor_unitario, nullif(trim(p_observacoes), ''))
+  returning id into v_id;
+  return v_id;
+end $$;
+
+-- Lotes que o motorista enviou nos últimos 7 dias (sem valores)
+drop function if exists public.lotes_enviados_motorista();
+create or replace function public.lotes_enviados_motorista()
+returns table (lote_id bigint, enviado_em timestamptz, costureira text, produto text, servico text, quantidade int, status text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not eh_motorista() then raise exception 'Sem permissão.'; end if;
+  return query
+  select l.id, l.enviado_em, pf.nome, p.nome, s.nome, l.quantidade, l.status
+    from lotes l join perfis pf on pf.id = l.mao_de_obra_id
+    join produtos p on p.id = l.produto_id join servicos s on s.id = l.servico_id
+   where l.criado_por = auth.uid() and l.enviado_em > now() - interval '7 days'
+   order by l.enviado_em desc limit 50;
 end $$;
 
 

@@ -748,3 +748,25 @@ body.v2 .menu-mais small { font-weight: 500; font-size: .78rem; }
   padding: .05rem .45rem; margin-left: .2rem; white-space: nowrap; vertical-align: middle; line-height: 1.5; }
 .btn-nome .autor, .equip-card .autor { margin: .2rem 0 0; align-self: flex-start; }
 .lista-final.hist li { font-size: .88rem; }
+
+/* Versão 9 — app do motorista */
+.push-card { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; border-left: 4px solid #a3abb9; }
+.push-card.ativo { border-left-color: #2e9d55; }
+.push-card.desligado, .push-card.instalar { border-left-color: var(--amarelo); }
+.push-card.bloqueado { border-left-color: #b3261e; }
+.mot-pecas { font-family: Manrope, sans-serif; font-weight: 800; font-size: 1.6rem; color: var(--navy); text-align: center; line-height: 1; }
+.mot-pecas small { display: block; font-size: .7rem; font-weight: 600; color: var(--txt-2); }
+.mot-acoes { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; }
+.mot-card.buscado { opacity: .85; border-left-color: #2e9d55 !important; }
+body.motorista .tc-sino { position: relative; width: 38px; height: 38px; border-radius: 10px; border: 0; background: rgba(255,255,255,.08); display: grid; place-items: center; cursor: pointer; }
+body.motorista .tc-sino svg { width: 19px; height: 19px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+body.motorista { padding-bottom: 1.5rem; }
+.mot-enviar { margin: 0 0 1rem; height: 52px; font-size: 1.05rem; }
+.modal .mot-linha { display: grid; grid-template-columns: 1fr 1fr 90px 34px; gap: .5rem; align-items: end; margin-bottom: .7rem;
+  padding: .7rem; border: 1px solid var(--borda); border-radius: 12px; background: #fafbfd; }
+.mot-linha label { font-size: .8rem; margin: 0 0 .2rem; }
+.mot-linha select, .mot-linha input { margin: 0 !important; }
+@media (max-width: 520px) {
+  .modal .mot-linha { grid-template-columns: 1fr 34px; }
+  .mot-linha > div:nth-child(1), .mot-linha > div:nth-child(2) { grid-column: 1 / -1; }
+}
