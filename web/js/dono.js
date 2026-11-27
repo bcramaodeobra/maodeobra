@@ -893,15 +893,17 @@ function modalNovaMo(tipo = "externa", depois = renderMaos) {
 async function renderMaos() {
   const [todas, funcs] = await Promise.all([carregarMaos(false), carregarFuncionarios()]);
   const externas = todas.filter((m) => !ehFuncHora(m) && !m.excluido_em);
-  const filtros = [["todos", "Todos", externas.length + funcs.length], ["externa", "Mão de obra externa", externas.length], ["funcionarios", "Funcionários", funcs.length]];
-  const verExt = filtroCad !== "funcionarios", verFunc = filtroCad !== "externa";
+  const filtros = [["todos", "Todos", null], ["externa", "Mão de obra externa", externas.length], ["funcionarios", "Funcionários", funcs.length],
+    ["motoristas", "Motoristas", null], ["admins", "Administradores e acessos", null]];
+  const verExt = ["todos", "externa"].includes(filtroCad), verFunc = ["todos", "funcionarios"].includes(filtroCad);
+  const verMot = ["todos", "motoristas"].includes(filtroCad), verAdm = ["todos", "admins"].includes(filtroCad);
 
   main.innerHTML = `
     <div class="topo-pagina">
-      <div><h1>Pessoas</h1><p>Mão de obra externa (lotes, com login) e funcionários da fábrica (salário mensal ou por hora).</p></div>
+      <div><h1>Pessoas</h1><p>Mão de obra externa, funcionários, motoristas, administradores e acessos (logins e senhas).</p></div>
       <div class="topo-acoes"><button class="btn acento" id="novoMo">＋ Novo cadastro</button></div>
     </div>
-    <div class="seg filtros-cad">${filtros.map(([k, t, n]) => `<button class="${k === filtroCad ? "ativo" : ""}" data-filtro="${k}">${t} <b>${n}</b></button>`).join("")}</div>
+    <div class="seg filtros-cad">${filtros.map(([k, t, n]) => `<button class="${k === filtroCad ? "ativo" : ""}" data-filtro="${k}">${t}${n != null ? ` <b>${n}</b>` : ""}</button>`).join("")}</div>
     ${verExt ? `<h2 class="sub-cad">Mão de obra externa</h2>
       ${externas.length ? `<div class="card tabela-wrap"><table>
       <thead><tr><th>Nome</th><th>Recebe</th><th>Usuário</th><th>WhatsApp</th><th>Chave PIX</th><th>Fechamento</th><th>Situação</th><th></th></tr></thead>
@@ -934,22 +936,34 @@ async function renderMaos() {
           <button class="btn sec peq" data-edf="${p.chave}">Editar</button>
           ${p.tipo === "hora" ? `<button class="btn sec peq" data-senha="${p.id}">Login</button>` : ""}
           ${lixeira(`data-exf="${p.chave}"`, `Excluir ${esc(p.nome)}`)}
-        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhum funcionário cadastrado.</div>`}` : ""}`;
+        </td></tr>`).join("")}</tbody></table></div>` : `<div class="card vazio">Nenhum funcionário cadastrado.</div>`}` : ""}
+    ${verMot ? cardMotoristas() : ""}
+    ${verAdm ? cardAdmins() + cardAcessos(todas) : ""}`;
+  if (verMot) ligarMotoristas();
+  if (verAdm) { ligarAdmins(); ligarAcessos(todas); }
 
   $$("[data-filtro]", main).forEach((b) => (b.onclick = () => { filtroCad = b.dataset.filtro; renderMaos(); }));
   $("#novoMo").onclick = () => {
+    if (filtroCad === "motoristas") return $("#novoMotorista").click();
+    if (filtroCad === "admins") return $("#novoAdmin").click();
     if (filtroCad !== "todos") return modalNovaMo(filtroCad);
     const ops = ["externa", "funcionarios"].filter((k) => moduloAtivo(k));
-    if (ops.length === 1) return modalNovaMo(ops[0]);
     const m = abrirModal({
       titulo: "Novo cadastro",
       conteudo: `<p class="muted small" style="margin-top:0">Quem você vai cadastrar?</p>
         <div class="menu-mais">
           <button type="button" data-novo="externa">${icone("externa")}<span>Mão de obra externa<br><small class="muted">leva lotes para fazer · tem login</small></span>${seta}</button>
           <button type="button" data-novo="funcionarios">${icone("fixos")}<span>Funcionário<br><small class="muted">salário mensal ou por hora</small></span>${seta}</button>
+          <button type="button" data-novo="motorista">${icone("externa")}<span>Motorista<br><small class="muted">recebe os avisos de lote pronto e envia lotes</small></span>${seta}</button>
+          <button type="button" data-novo="admin">${icone("conta")}<span>Administrador<br><small class="muted">acessa o painel do dono</small></span>${seta}</button>
         </div>`,
     });
-    $$("[data-novo]", m.form).forEach((b) => (b.onclick = () => { m.fechar(); modalNovaMo(b.dataset.novo); }));
+    $$("[data-novo]", m.form).forEach((b) => (b.onclick = () => {
+      m.fechar();
+      if (b.dataset.novo === "motorista") return $("#novoMotorista").click();
+      if (b.dataset.novo === "admin") return $("#novoAdmin").click();
+      modalNovaMo(b.dataset.novo);
+    }));
   };
   const func = (ch) => funcs.find((p) => p.chave === ch);
   $$("[data-fichaf]", main).forEach((b) => (b.onclick = () => fichaFuncionario(func(b.dataset.fichaf))));
@@ -1348,54 +1362,14 @@ async function renderAdmin(pre = {}) {
       </div>
     </div>
 
-    ${cardAdmins()}
-    ${cardMotoristas()}
-    <div class="card section" id="cardAcessos" style="margin-top:1rem">
-      <h2>🔑 Acessos</h2>
-      <div class="grid-admin">
-        <div>
-          <h3>Minha conta</h3>
-          <p class="muted small" style="margin-top:0">Você entra com o usuário <strong id="meuUsuario">${esc(perfil.usuario)}</strong>.</p>
-          <form id="formMeuUsuario" novalidate>
-            <div class="linha" style="grid-template-columns:1fr auto;align-items:end">
-              <div><label>Novo usuário</label><input name="usuario" value="${esc(perfil.usuario)}" autocapitalize="none"></div>
-              <button class="btn" type="submit">Salvar usuário</button>
-            </div>
-          </form>
-          <form id="formMinhaSenha" novalidate>
-            <div class="linha">
-              <div><label>Senha atual</label><input type="password" name="atual" autocomplete="current-password"></div>
-            </div>
-            <div class="linha">
-              <div><label>Nova senha (mín. 6)</label><input type="password" name="nova" autocomplete="new-password"></div>
-              <div><label>Repita a nova senha</label><input type="password" name="nova2" autocomplete="new-password"></div>
-            </div>
-            <button class="btn" type="submit">Trocar minha senha</button>
-          </form>
-        </div>
-        <div>
-          <h3>Acesso das mãos de obra</h3>
-          <form id="formAcessoMo" novalidate>
-            <div class="linha"><div><label>Mão de obra</label><select name="mo"><option value="">Selecione…</option>
-              ${maos.map((m) => `<option value="${m.id}">${esc(m.nome)}${m.ativo ? "" : " (inativa)"}</option>`).join("")}</select></div></div>
-            <div class="linha">
-              <div><label>Usuário</label><input name="usuario" autocapitalize="none" disabled></div>
-              <div><label>Nova senha (em branco = manter)</label><input name="senha" placeholder="mín. 6 caracteres" disabled></div>
-            </div>
-            <button class="btn" type="submit" disabled>Salvar acesso</button>
-            <p class="muted small" style="margin-bottom:0">Depois de salvar, passe o novo usuário e/ou a nova senha para ela.</p>
-          </form>
-        </div>
-      </div>
-    </div>`;
+    ${cardHistorico()}`;
 
   ligarTipos();
-  ligarAdmins();
-  ligarMotoristas();
+  ligarHistoricoCard();
   ligarCalculadora();
   ligarPagamentos(maos, pre);
   ligarRelatorio();
-  ligarAcessos(maos);
+
 
   $("#btnAbrirPlanilha").onclick = () => window.open(conf.link_planilha, "_blank", "noopener");
   $("#btnBackupAgora").onclick = () => {
@@ -2553,11 +2527,28 @@ function cardAdmins() {
     <p class="muted small" style="margin-top:.2rem">Quem pode entrar no painel do dono. Cada alteração no sistema fica anotada com o nome de quem fez.</p>
     <div id="listaAdmins"><p class="muted small">Carregando…</p></div>
   </div>
-  <div class="card section" id="cardHistorico" style="margin-top:1rem">
-    <div class="section-head"><h2 style="margin:0">Histórico de alterações</h2>
+`;
+}
+function cardHistorico() {
+  return `<details class="card section suspensa" id="cardHistorico" style="margin-top:1rem">
+    <summary><h2>Histórico de alterações</h2><span class="small muted">o que foi feito, por quem e quando</span></summary>
+    <div class="section-head" style="margin-top:.6rem"><span></span>
       <select id="histFiltro" style="max-width:260px;width:auto"><option value="">Todos os administradores</option></select></div>
     <div id="listaHist"><p class="muted small">Carregando…</p></div>
-  </div>`;
+  </details>`;
+}
+function ligarHistoricoCard() {
+  const card = $("#cardHistorico");
+  let carregado = false;
+  card.addEventListener("toggle", async () => {
+    if (!card.open || carregado) return;
+    carregado = true;
+    const admins = await carregarAdmins().catch(() => []);
+    const sel = $("#histFiltro");
+    sel.innerHTML = `<option value="">Todos os administradores</option>${admins.map((a) => `<option value="${a.id}">${esc(a.nome)}</option>`).join("")}`;
+    sel.onchange = () => ligarHistorico(sel.value);
+    ligarHistorico("");
+  });
 }
 async function ligarAdmins() {
   const admins = await carregarAdmins();
@@ -2600,10 +2591,6 @@ async function ligarAdmins() {
       ligarAdmins();
     },
   });
-  const sel = $("#histFiltro");
-  sel.innerHTML = `<option value="">Todos os administradores</option>${admins.map((a) => `<option value="${a.id}">${esc(a.nome)}</option>`).join("")}`;
-  sel.onchange = () => ligarHistorico(sel.value);
-  ligarHistorico("");
 }
 
 const TABELAS_HIST = {
@@ -2732,6 +2719,49 @@ async function ligarMotoristas() {
       ligarMotoristas();
     },
   });
+}
+
+
+// Acessos (Minha conta + login das mãos de obra) — fica na aba Pessoas
+function cardAcessos(maos) {
+  return `<div class="card section" id="cardAcessos" style="margin-top:1rem">
+      <h2>Acessos</h2>
+      <div class="grid-admin">
+        <div>
+          <h3>Minha conta</h3>
+          <p class="muted small" style="margin-top:0">Você entra com o usuário <strong id="meuUsuario">${esc(perfil.usuario)}</strong>.</p>
+          <form id="formMeuUsuario" novalidate>
+            <div class="linha" style="grid-template-columns:1fr auto;align-items:end">
+              <div><label>Novo usuário</label><input name="usuario" value="${esc(perfil.usuario)}" autocapitalize="none"></div>
+              <button class="btn" type="submit">Salvar usuário</button>
+            </div>
+          </form>
+          <form id="formMinhaSenha" novalidate>
+            <div class="linha">
+              <div><label>Senha atual</label><input type="password" name="atual" autocomplete="current-password"></div>
+            </div>
+            <div class="linha">
+              <div><label>Nova senha (mín. 6)</label><input type="password" name="nova" autocomplete="new-password"></div>
+              <div><label>Repita a nova senha</label><input type="password" name="nova2" autocomplete="new-password"></div>
+            </div>
+            <button class="btn" type="submit">Trocar minha senha</button>
+          </form>
+        </div>
+        <div>
+          <h3>Acesso das mãos de obra</h3>
+          <form id="formAcessoMo" novalidate>
+            <div class="linha"><div><label>Mão de obra</label><select name="mo"><option value="">Selecione…</option>
+              ${maos.map((m) => `<option value="${m.id}">${esc(m.nome)}${m.ativo ? "" : " (inativa)"}</option>`).join("")}</select></div></div>
+            <div class="linha">
+              <div><label>Usuário</label><input name="usuario" autocapitalize="none" disabled></div>
+              <div><label>Nova senha (em branco = manter)</label><input name="senha" placeholder="mín. 6 caracteres" disabled></div>
+            </div>
+            <button class="btn" type="submit" disabled>Salvar acesso</button>
+            <p class="muted small" style="margin-bottom:0">Depois de salvar, passe o novo usuário e/ou a nova senha para ela.</p>
+          </form>
+        </div>
+      </div>
+    </div>`;
 }
 
 render();

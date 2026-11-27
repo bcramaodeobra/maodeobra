@@ -770,3 +770,10 @@ body.motorista { padding-bottom: 1.5rem; }
   .modal .mot-linha { grid-template-columns: 1fr 34px; }
   .mot-linha > div:nth-child(1), .mot-linha > div:nth-child(2) { grid-column: 1 / -1; }
 }
+
+/* Lista suspensa (Histórico de alterações) */
+details.suspensa > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+details.suspensa > summary::-webkit-details-marker { display: none; }
+details.suspensa > summary h2 { margin: 0; font-size: 1.1rem; }
+details.suspensa > summary::after { content: ""; margin-left: auto; width: 10px; height: 10px; border-right: 2px solid var(--txt-2); border-bottom: 2px solid var(--txt-2); transform: rotate(45deg); transition: transform .15s; }
+details.suspensa[open] > summary::after { transform: rotate(-135deg); }
